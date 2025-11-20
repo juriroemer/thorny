@@ -1,0 +1,9 @@
+c2: 127.0.0.1
+network:
+  iface: en0
+  promiscuous: true
+logging:
+  snaplen: 1500
+  packetsperlogfile: 10
+filters:
+  -
