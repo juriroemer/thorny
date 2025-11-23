@@ -1,9 +1,15 @@
 c2: 127.0.0.1
 network:
   iface: en0
-  promiscuous: true
+  promiscuous: false
 logging:
   snaplen: 1500
   packetsperlogfile: 10
 filters:
-  -
+  - name: ipfilter
+    config:
+      ips:
+        - 127.0.0.1
+handlers:
+  - port: 80
+    id: http_handler
