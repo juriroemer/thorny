@@ -1,9 +1,10 @@
-package main
+package config
 
 import (
 	"net"
 	"os"
 
+	"github.com/juriroemer/thorny/filter"
 	"go.yaml.in/yaml/v4"
 )
 
@@ -20,7 +21,7 @@ type Config struct {
 		Packetsperlogfile int `yaml:"packetsperlogfile"`
 	}
 
-	Filters []Filter `yaml:"filters"`
+	Filters []filter.Filter `yaml:"filters"`
 
 	Handlers []Handlers `yaml:"handlers"`
 }
@@ -42,16 +43,6 @@ func NewConfig(configPath *string) (*Config, error) {
 	}
 
 	return config, nil
-}
-
-// FIXME HACK
-type FilterConfig struct {
-	Ips []string `yaml:"ips"`
-}
-
-type Filter struct {
-	Name   string       `yaml:"name"`
-	Values FilterConfig `yaml:"config"`
 }
 
 type Handlers struct {

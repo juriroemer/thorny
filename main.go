@@ -7,7 +7,10 @@ import (
 	"os"
 
 	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
+	"github.com/juriroemer/thorny/config"
+	"github.com/juriroemer/thorny/filter"
 )
 
 const (
@@ -27,7 +30,7 @@ func main() {
 	configFile := flag.String("config", "config.yaml", "the path of the config file")
 	flag.Parse()
 
-	config, err := NewConfig(configFile)
+	config, err := config.NewConfig(configFile)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -48,7 +51,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fr := NewFilterRegistry()
+	fr := filter.NewFilterRegistry()
 	fr.Init()
 
 	for _, f := range config.Filters {
@@ -73,6 +76,13 @@ func main() {
 	   	} */
 
 	for packet := range source.Packets() {
+		layer := packet.Layer(layers.LayerTypeIPv4)
+		_, ok := layer.(*layers.IPv4)
+		if !ok {
+			// It's not IPv4 traffic.
+			continue
+		}
+
 		if fr.Validate(packet) {
 			fmt.Println("VALID")
 		} else {
