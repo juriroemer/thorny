@@ -1,6 +1,5 @@
 c2: 127.0.0.1
 network:
-  iface: en0
   promiscuous: false
 logging:
   snaplen: 1500
@@ -9,7 +8,28 @@ filters:
   - name: ipfilter
     config:
       ips:
-        - 127.0.0.1
+        #- 128.176.164.92
+        - 10.67.59.246/8
+        #- 128.176.0.0/16
+        #- 185.151.152.0/22
+
+      ## NOTE idee:
+      ## beim parsen optimieren, gucken ob eine range in der anderen drin ist, etc
+#     dest:
+#       - ...
+#     src:
+#       - ...
+
+## A Map of Handlers. Uses the port a the handler should use as key.
 handlers:
-  - port: 80
-    id: http_handler
+  80:
+    name: http_handler
+    config:
+      template: nginx
+      values:
+        version: x.x.x # The nginx version that is set in the  `Server` header, e.g. `version: 1.29.2` -> `Server: nginx/1.29.2`
+        headers: # Map of additional headers you want to deliver
+          Content blabla: 'text/html'
+  #25:
+  #  name: smtp_handler
+  #  config:

@@ -1,10 +1,12 @@
 package config
 
 import (
+	"log/slog"
 	"net"
 	"os"
 
 	"github.com/juriroemer/thorny/filter"
+	"github.com/juriroemer/thorny/handler"
 	"go.yaml.in/yaml/v4"
 )
 
@@ -21,9 +23,14 @@ type Config struct {
 		Packetsperlogfile int `yaml:"packetsperlogfile"`
 	}
 
-	Filters []filter.Filter `yaml:"filters"`
+	Filters []filter.CfgFilter `yaml:"filters"`
 
-	Handlers []Handlers `yaml:"handlers"`
+	Handlers handler.Handlers `yaml:"handlers"`
+}
+
+func (c *Config) validate() bool {
+	slog.Warn("Config validation not implemented.")
+	return true
 }
 
 func NewConfig(configPath *string) (*Config, error) {
@@ -42,10 +49,12 @@ func NewConfig(configPath *string) (*Config, error) {
 		return nil, err
 	}
 
-	return config, nil
-}
+	// config defaults; the new yaml fork yaml/go-yaml does not seem to have default values yet :(
+	if config.Network.Iface == "" {
+		config.Network.Iface = *InferDefaultNInterface()
+	}
 
-type Handlers struct {
-	Port int    `yaml:"port"`
-	Id   string `yaml:"id"`
+	config.validate()
+
+	return config, nil
 }

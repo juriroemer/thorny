@@ -1,60 +1,57 @@
 package filter
 
 import (
-	"fmt"
-
 	"github.com/google/gopacket"
 )
 
 type FilterConfig interface{}
-type FilterFunction = func(gopacket.Packet, FilterConfig) bool
-type FilterInitilizer = func(config FilterConfig) FilterRecord
-
-type Filter struct {
-	Name   string       `yaml:"name"`
-	Values FilterConfig `yaml:"config"`
+type FilterPlugin interface {
+	Name() string
+	New(config FilterConfig) (FilterInstance, error)
 }
 
-type FilterRecord struct {
-	Name     string
-	Config   FilterConfig
-	Function FilterFunction
+type CfgFilter struct {
+	Name   string       `yaml:"name"`
+	Config FilterConfig `yaml:"config"`
+}
+
+type FilterInstance interface {
+	Match(gopacket.Packet) bool
 }
 
 type FilterRegistry struct {
-	filter map[string]FilterInitilizer // TODO make this a struct that holds FilterFunction and some kind of FilterConfigParsingFunction
-	active map[string]FilterRecord
+	filterPlugins map[string]FilterPlugin
+	active        map[string]FilterInstance
 }
 
 func NewFilterRegistry() *FilterRegistry {
 	return &FilterRegistry{
-		filter: make(map[string]FilterInitilizer),
-		active: make(map[string]FilterRecord),
+		filterPlugins: make(map[string]FilterPlugin),
+		active:        make(map[string]FilterInstance),
 	}
 }
 
 func (f *FilterRegistry) Init() error {
-	err := f.Register("ipfilter", NewIpFilter)
-	return err
+	f.Register(IpFilterPlugin{})
+	return nil
 }
 
-func (f *FilterRegistry) Register(name string, fi FilterInitilizer) error {
-	if _, exists := f.filter[name]; !exists {
-		f.filter[name] = fi
-		return nil
-	} else {
-		return fmt.Errorf("filter with name %s already exists", name)
-	}
+func (f *FilterRegistry) Register(p FilterPlugin) {
+	f.filterPlugins[p.Name()] = p
 }
 
 func (f *FilterRegistry) Deregister(name string) {
-	delete(f.filter, name)
+	delete(f.filterPlugins, name)
 }
 
-func (f *FilterRegistry) Activate(filter Filter) {
-	initilizer := f.filter[filter.Name]
-	record := initilizer(filter.Values)
-	f.active[filter.Name] = record
+func (r *FilterRegistry) Activate(f CfgFilter) error {
+	plugin := r.filterPlugins[f.Name]
+	instance, err := plugin.New(f.Config)
+	if err != nil {
+		return err
+	}
+	r.active[f.Name] = instance
+	return nil
 }
 
 func (f *FilterRegistry) Deactivate(filterName string) {
@@ -63,7 +60,7 @@ func (f *FilterRegistry) Deactivate(filterName string) {
 
 func (f *FilterRegistry) Validate(p gopacket.Packet) bool {
 	for _, af := range f.active {
-		if !af.Function(p, af.Config) {
+		if !af.Match(p) {
 			return false
 		}
 	}

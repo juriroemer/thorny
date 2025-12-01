@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 
 	"github.com/google/gopacket"
@@ -11,20 +12,8 @@ import (
 	"github.com/google/gopacket/pcap"
 	"github.com/juriroemer/thorny/config"
 	"github.com/juriroemer/thorny/filter"
+	"github.com/juriroemer/thorny/handler"
 )
-
-const (
-	interfaceName = "en0" // Ubuntu: "eth0", Macos: "en0"
-	snaplen       = 1500
-	//logSizeInPakets = 1000
-)
-
-var filters = []func() bool{}
-
-func RegisterFilter(f func() bool) error {
-	filters = append(filters, f)
-	return nil
-}
 
 func main() {
 	configFile := flag.String("config", "config.yaml", "the path of the config file")
@@ -38,8 +27,27 @@ func main() {
 
 	fmt.Println(config)
 
+	fr := filter.NewFilterRegistry()
+	fr.Init()
+
+	for _, f := range config.Filters {
+		fr.Activate(f)
+		fmt.Println("ACTIVATED")
+		fmt.Println(fr)
+	}
+
+	hr := handler.NewHandlerRegistry()
+	hr.Init()
+	for port, h := range config.Handlers {
+		listener, _ := net.Listen("tcp", fmt.Sprintf(":%d", port)) // TODO add error checking
+		fmt.Println("LISTENER")
+		fmt.Println(listener.Addr().String())
+		hr.Activate(h, listener)
+	}
+	go hr.ListenAll()
+
 	// Get handler attached to an interface.
-	handle, err := pcap.OpenLive(interfaceName, snaplen, config.Network.Promiscuous, pcap.BlockForever)
+	handle, err := pcap.OpenLive(config.Network.Iface, int32(config.Logging.Snaplen), config.Network.Promiscuous, pcap.BlockForever)
 	if err != nil {
 		slog.Error("Could not OpenLive", slog.String("err", err.Error()))
 		os.Exit(1)
@@ -49,13 +57,6 @@ func main() {
 	if err != nil {
 		slog.Error("Could not OpenLive", slog.String("err", err.Error()))
 		os.Exit(1)
-	}
-
-	fr := filter.NewFilterRegistry()
-	fr.Init()
-
-	for _, f := range config.Filters {
-		fr.Activate(f)
 	}
 
 	// Start new Source reader.
