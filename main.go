@@ -32,8 +32,6 @@ func main() {
 
 	for _, f := range config.Filters {
 		fr.Activate(f)
-		fmt.Println("ACTIVATED")
-		fmt.Println(fr)
 	}
 
 	hr := handler.NewHandlerRegistry()
@@ -44,7 +42,7 @@ func main() {
 		fmt.Println(listener.Addr().String())
 		hr.Activate(h, listener)
 	}
-	go hr.ListenAll()
+	go hr.ServeAll()
 
 	// Get handler attached to an interface.
 	handle, err := pcap.OpenLive(config.Network.Iface, int32(config.Logging.Snaplen), config.Network.Promiscuous, pcap.BlockForever)

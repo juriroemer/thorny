@@ -13,16 +13,9 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
-var http_instance HttpHandlerInstance // TODO replace with closure / anonymous function in HandleFunc
-
 type HttpHandlerConfig struct {
-	Template string `yaml:"template"`
-	Values   nginx  `yaml:"values"`
-}
-
-type nginx struct {
-	Version string            `yaml:"version"`
-	Headers map[string]string `yaml:"headers"`
+	Template string         `yaml:"template"`
+	Values   TemplateConfig `yaml:"values"` // FIXME bad name
 }
 
 type HttpHandlerPlugin struct {
@@ -33,83 +26,124 @@ func (HttpHandlerPlugin) Name() string {
 }
 
 type HttpHandlerInstance struct {
-	cfg      HttpHandlerConfig
-	listener net.Listener
+	cfg       HttpHandlerConfig
+	listener  net.Listener
+	templates map[string]func() TemplateConfig
+}
+
+type TemplateConfig interface {
+	Validate() error
+}
+
+// capability interfaces (small interfaces)
+type VersionProvider interface {
+	GetVersion() string
+}
+
+type HeaderProvider interface {
+	GetHeaders() map[string]string
 }
 
 func (HttpHandlerPlugin) New(config HandlerConfig, l net.Listener) (HandlerInstance, error) {
-	cfg, err := HttpHandlerPlugin{}.parseConfig(config)
-	if err != nil {
+
+	instance := HttpHandlerInstance{
+		listener:  l,
+		templates: make(map[string]func() TemplateConfig),
+	}
+
+	// register templates
+	instance.RegisterTemplate("nginx", NginxTemplateFactory())
+
+	if err := instance.loadHTTPConfig(config); err != nil {
 		return nil, err
 	}
 
-	http_instance = HttpHandlerInstance{
-		cfg:      *cfg,
-		listener: l,
-	}
-	return &http_instance, nil
+	return &instance, nil
 }
 
-func (HttpHandlerPlugin) parseConfig(config HandlerConfig) (*HttpHandlerConfig, error) {
-	var cfg HttpHandlerConfig
-	b, err := yaml.Marshal(config)
-	if err != nil {
-		return nil, err
+func (hh *HttpHandlerInstance) loadHTTPConfig(raw HandlerConfig) error {
+	templateName := raw["template"].(string)
+	factory := hh.templates[templateName]
+	if factory == nil {
+		return fmt.Errorf("unknown template: %s", templateName)
 	}
-	if err := yaml.Unmarshal(b, &cfg); err != nil {
-		return nil, err
+	cfg := factory()
+
+	valuesRaw := raw["values"]
+	valuesYaml, _ := yaml.Marshal(valuesRaw)
+
+	if err := yaml.Unmarshal(valuesYaml, cfg); err != nil {
+		return err
 	}
 
-	return &cfg, nil
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
+	hh.cfg = HttpHandlerConfig{
+		Template: templateName,
+		Values:   cfg,
+	}
+	return nil
 }
 
-func (hh *HttpHandlerInstance) Listen() {
-	// BUG
-	http.HandleFunc("/", serveHTTP)
-	go log.Fatal(http.Serve(hh.listener, nil))
+func (hh *HttpHandlerInstance) RegisterTemplate(id string, tf func() TemplateConfig) {
+	hh.templates[id] = tf
 }
 
-// TODO extend templates to headers, so they aren't set here anymore -> “config subtype registry”
-func serveHTTP(w http.ResponseWriter, r *http.Request) {
-	n := http_instance.cfg
-
-	// set nginx default headers
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Etag", "6969")
-	w.Header().Set("Last-Modified", formattedTimeMinus20())
-	w.Header().Set("Server", fmt.Sprintf("nginx/%s", n.Values.Version))
-
-	slog.Info(r.RequestURI)
-	// strip and add additional headers from config
-	for k, v := range n.Values.Headers {
-		k_stripped := strings.ReplaceAll(k, " ", "-")
-		if k != k_stripped {
-			slog.Warn(fmt.Sprintf("Whitespace found in nginx header, replaced '%s' with '%s'. Please check your config.", k, k_stripped))
+func (hh *HttpHandlerInstance) Serve() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", hh.Handler())
+	go func() {
+		if err := http.Serve(hh.listener, mux); err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
 		}
-		w.Header().Set(k_stripped, v)
-	}
+	}()
+}
 
-	//remove default headers
-	w.Header()["Content-Type"] = nil
-	// When the Content-Length Header is not set, http.ResponseWriter will set `Transfer-Encoding: chunked`,
-	// https://www.dolthub.com/blog/2022-03-09-debugging-http-body-read-behavior/#conclusion
-	// if the response is larger than the chunking buffer size. The buffer size can be increased:
-	// https://stackoverflow.com/questions/68778961/how-to-configure-the-buffer-size-for-http-responsewriter
-	// -> TODO decide the buffer size should be increased (to something larger than the response)
-	// to suppress both the Content-Length and Transfer-Encoding Headers, as the nginx welcome page sends neither
-	w.Header()["Content-Length"] = nil
+func (hh *HttpHandlerInstance) Handler() http.HandlerFunc {
+	cfg := hh.cfg
 
-	// populate template
-	tmplFile := fmt.Sprintf("./handler/http_templates/%s.tmpl", n.Template)
-	tmpl, err := template.ParseFiles(tmplFile)
-	if err != nil {
-		panic(err)
-	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		// use capability interface for version
+		if vp, ok := cfg.Values.(VersionProvider); ok {
+			// TODO generalize this - Should Header Providers write their own Headers? `VersionProvider.CustomizeHeaders(w.Header())`
+			w.Header().Set("Server", fmt.Sprintf("nginx/%s", vp.GetVersion()))
+		}
 
-	// write template to response writer
-	err = tmpl.Execute(w, make(map[string]string)) // n.values
-	if err != nil {
-		panic(err)
+		slog.Info(r.RequestURI)
+		// strip and add additional headers from config
+		if hp, ok := cfg.Values.(HeaderProvider); ok {
+			for k, v := range hp.GetHeaders() {
+				k_stripped := strings.ReplaceAll(k, " ", "-")
+				if k != k_stripped {
+					slog.Warn(fmt.Sprintf("Whitespace found in nginx header, replaced '%s' with '%s'. Please check your config.", k, k_stripped))
+				}
+				w.Header().Set(k_stripped, v)
+			}
+		}
+
+		//remove default headers
+		w.Header()["Content-Type"] = nil
+		// When the Content-Length Header is not set, http.ResponseWriter will set `Transfer-Encoding: chunked`,
+		// https://www.dolthub.com/blog/2022-03-09-debugging-http-body-read-behavior/#conclusion
+		// if the response is larger than the chunking buffer size. The buffer size can be increased:
+		// https://stackoverflow.com/questions/68778961/how-to-configure-the-buffer-size-for-http-responsewriter
+		// -> TODO decide the buffer size should be increased (to something larger than the response)
+		// to suppress both the Content-Length and Transfer-Encoding Headers, as the nginx welcome page sends neither
+		w.Header()["Content-Length"] = nil
+
+		// populate template
+		tmplFile := fmt.Sprintf("./handler/http_templates/%s.tmpl", cfg.Template)
+		tmpl, err := template.ParseFiles(tmplFile)
+		if err != nil {
+			panic(err)
+		}
+
+		// write template to response writer
+		if err := tmpl.Execute(w, make(map[string]string)); err != nil {
+			panic(err)
+		}
 	}
 }
 

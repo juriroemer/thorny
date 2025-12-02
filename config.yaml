@@ -27,9 +27,9 @@ handlers:
     config:
       template: nginx
       values:
-        version: x.x.x # The nginx version that is set in the  `Server` header, e.g. `version: 1.29.2` -> `Server: nginx/1.29.2`
+        version: 69.42.23 # The nginx version that is set in the  `Server` header, e.g. `version: 1.29.2` -> `Server: nginx/1.29.2`
         headers: # Map of additional headers you want to deliver
           Content blabla: 'text/html'
   #25:
   #  name: smtp_handler
-  #  config:
+  #  config: #TODO catch missing config, make them not panic

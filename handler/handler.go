@@ -3,7 +3,7 @@ package handler
 import "net"
 
 type Handlers = map[int]CfgHandler
-type HandlerConfig interface{}
+type HandlerConfig = map[string]any
 type HandlerPlugin interface {
 	Name() string
 	New(config HandlerConfig, l net.Listener) (HandlerInstance, error)
@@ -15,7 +15,7 @@ type CfgHandler struct {
 }
 
 type HandlerInstance interface {
-	Listen()
+	Serve()
 }
 
 type HandlerRegistry struct {
@@ -56,8 +56,8 @@ func (r *HandlerRegistry) Activate(f CfgHandler, l net.Listener) error { //TODO 
 	return nil
 }
 
-func (f *HandlerRegistry) ListenAll() {
+func (f *HandlerRegistry) ServeAll() {
 	for _, h := range f.active {
-		h.Listen()
+		h.Serve()
 	}
 }
