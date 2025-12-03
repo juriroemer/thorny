@@ -23,6 +23,10 @@ type Config struct {
 		Packetsperlogfile int `yaml:"packetsperlogfile"`
 	}
 
+	Snort struct {
+		Rules string `yaml:"rules"`
+	}
+
 	Filters []filter.CfgFilter `yaml:"filters"`
 
 	Handlers handler.Handlers `yaml:"handlers"`

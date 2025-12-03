@@ -25,7 +25,13 @@ func main() {
 		return
 	}
 
-	fmt.Println(config)
+	go func() {
+		// TODO use context for things like config
+		err := log_snort(config.Snort.Rules)
+		if err != nil {
+			slog.Warn(err.Error())
+		}
+	}()
 
 	fr := filter.NewFilterRegistry()
 	fr.Init()
@@ -34,14 +40,15 @@ func main() {
 		fr.Activate(f)
 	}
 
+	// Register, activate and serve configured protocol handlers
 	hr := handler.NewHandlerRegistry()
 	hr.Init()
+
 	for port, h := range config.Handlers {
 		listener, _ := net.Listen("tcp", fmt.Sprintf(":%d", port)) // TODO add error checking
-		fmt.Println("LISTENER")
-		fmt.Println(listener.Addr().String())
 		hr.Activate(h, listener)
 	}
+
 	go hr.ServeAll()
 
 	// Get handler attached to an interface.
@@ -78,15 +85,14 @@ func main() {
 		layer := packet.Layer(layers.LayerTypeIPv4)
 		_, ok := layer.(*layers.IPv4)
 		if !ok {
-			// It's not IPv4 traffic.
 			continue
 		}
 
-		if fr.Validate(packet) {
+		/* if fr.Validate(packet) {
 			fmt.Println("VALID")
 		} else {
 			fmt.Println("NOT VALID")
-		}
+		} */
 		/* if count%logSizeInPakets == 0 {
 			filename = fmt.Sprintf("logs/log-%s.pcap", time.Now().Format("2006-01-02_15:04:05"))
 			fileWriter, _ = os.Create(filename)

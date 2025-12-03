@@ -44,7 +44,7 @@ func (f *HandlerRegistry) Deregister(name string) {
 	delete(f.handlerPlugins, name)
 }
 
-func (r *HandlerRegistry) Activate(f CfgHandler, l net.Listener) error { //TODO replace with Listen() ?
+func (r *HandlerRegistry) Activate(f CfgHandler, l net.Listener) error {
 	plugin := r.handlerPlugins[f.Name]
 
 	instance, err := plugin.New(f.Config, l)
