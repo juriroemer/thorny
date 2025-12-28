@@ -35,15 +35,6 @@ type TemplateConfig interface {
 	Validate() error
 }
 
-// capability interfaces (small interfaces)
-type VersionProvider interface {
-	GetVersion() string
-}
-
-type HeaderProvider interface {
-	GetHeaders() map[string]string
-}
-
 func (HttpHandlerPlugin) New(config HandlerConfig, l net.Listener) (HandlerInstance, error) {
 
 	instance := HttpHandlerInstance{

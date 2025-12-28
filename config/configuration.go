@@ -14,6 +14,7 @@ type Config struct {
 	C2 net.IP `yaml:"c2"`
 
 	Network struct {
+		Ips         []net.IP
 		Iface       string `yaml:"iface"`
 		Promiscuous bool   `yaml:"promiscuous"`
 	}
@@ -30,6 +31,8 @@ type Config struct {
 	Filters []filter.CfgFilter `yaml:"filters"`
 
 	Handlers handler.Handlers `yaml:"handlers"`
+
+	Tls map[any]any `yaml:"tls"`
 }
 
 func (c *Config) validate() bool {
@@ -53,9 +56,31 @@ func NewConfig(configPath *string) (*Config, error) {
 		return nil, err
 	}
 
+	iface := InferDefaultNInterface()
+	// these might be local ips - how to handle that? set Ips manually?
+	addrs, err := iface.Addrs()
+	if err != nil {
+		slog.Warn("failed to get addresses for interface", "iface", iface.Name, "err", err)
+	} else {
+		for _, a := range addrs {
+			switch v := a.(type) {
+			case *net.IPNet:
+				if v.IP != nil {
+					config.Network.Ips = append(config.Network.Ips, v.IP)
+				}
+			case *net.IPAddr:
+				if v.IP != nil {
+					config.Network.Ips = append(config.Network.Ips, v.IP)
+				}
+			default:
+				slog.Debug("unsupported addr type; skipping", "addr", a)
+			}
+		}
+	}
+
 	// config defaults; the new yaml fork yaml/go-yaml does not seem to have default values yet :(
 	if config.Network.Iface == "" {
-		config.Network.Iface = *InferDefaultNInterface()
+		config.Network.Iface = iface.Name
 	}
 
 	config.validate()

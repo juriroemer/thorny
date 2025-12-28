@@ -6,13 +6,12 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"sync"
 
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcap"
 	"github.com/juriroemer/thorny/config"
 	"github.com/juriroemer/thorny/filter"
 	"github.com/juriroemer/thorny/handler"
+	"github.com/juriroemer/thorny/lib"
 )
 
 func main() {
@@ -25,13 +24,34 @@ func main() {
 		return
 	}
 
-	go func() {
+	// LOGGING
+	// TODO add IP to filename, e.g. log-{IP}.jsonl
+	logFile, _ := os.OpenFile("log.jsonl", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	jsonHandler := slog.NewJSONHandler(logFile, &slog.HandlerOptions{
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			switch a.Key {
+			case slog.LevelKey, slog.MessageKey, slog.TimeKey: // drop Level, MSG and slog timestamp
+				return slog.Attr{}
+			}
+			return a
+		},
+	})
+	sensorLogger := slog.New(jsonHandler).With("sensor_ip", "ip") // TODO add ip
+
+	// TODO create certs for ssh and tls, add to context
+	os.MkdirAll("cert", os.ModePerm)
+	tlsUserConf, err := lib.NewTlsUserConfig(config.Tls, config.Network.Ips)
+	if err := lib.GenerateSelfSignedCert(tlsUserConf); err != nil {
+
+	}
+
+	/* go func() {
 		// TODO use context for things like config
 		err := log_snort(config.Snort.Rules)
 		if err != nil {
 			slog.Warn(err.Error())
 		}
-	}()
+	}() */
 
 	fr := filter.NewFilterRegistry()
 	fr.Init()
@@ -46,120 +66,15 @@ func main() {
 
 	for port, h := range config.Handlers {
 		listener, _ := net.Listen("tcp", fmt.Sprintf(":%d", port)) // TODO add error checking
-		hr.Activate(h, listener)
+		portLogger := sensorLogger.With(
+			slog.Int("port", port),
+		)
+		hr.Activate(h, listener, portLogger)
 	}
 
 	go hr.ServeAll()
 
-	// Get handler attached to an interface.
-	handle, err := pcap.OpenLive(config.Network.Iface, int32(config.Logging.Snaplen), config.Network.Promiscuous, pcap.BlockForever)
-	if err != nil {
-		slog.Error("Could not OpenLive", slog.String("err", err.Error()))
-		os.Exit(1)
-	}
-
-	/* iface, err := net.InterfaceByName(interfaceName) */
-	if err != nil {
-		slog.Error("Could not OpenLive", slog.String("err", err.Error()))
-		os.Exit(1)
-	}
-
-	// Start new Source reader.
-	source := gopacket.NewPacketSource(handle, handle.LinkType())
-
-	/* 	// Reading packages.
-	   	var count = 1
-	   	os.Mkdir("logs", 0777)
-	   	var filename = fmt.Sprintf("logs/log-%s.pcap", time.Now().Format("2006-01-02_15:04:05"))
-
-	   	// This is suppose to be a file writer, but we will use memory, just for simplification.
-	   	fileWriter, _ := os.Create(filename)
-	   	pcapWriter := pcapgo.NewWriterNanos(fileWriter)
-	   	err = pcapWriter.WriteFileHeader(snaplen, handle.LinkType())
-	   	if err != nil {
-	   		slog.Error("Could not write pcap header", slog.String("err", err.Error()))
-	   		os.Exit(1)
-	   	} */
-
-	for packet := range source.Packets() {
-		layer := packet.Layer(layers.LayerTypeIPv4)
-		_, ok := layer.(*layers.IPv4)
-		if !ok {
-			continue
-		}
-
-		/* if fr.Validate(packet) {
-			fmt.Println("VALID")
-		} else {
-			fmt.Println("NOT VALID")
-		} */
-		/* if count%logSizeInPakets == 0 {
-			filename = fmt.Sprintf("logs/log-%s.pcap", time.Now().Format("2006-01-02_15:04:05"))
-			fileWriter, _ = os.Create(filename)
-			pcapWriter = pcapgo.NewWriterNanos(fileWriter)
-			err = pcapWriter.WriteFileHeader(snaplen, handle.LinkType())
-			if err != nil {
-				slog.Error("Could not write pcap header", slog.String("err", err.Error()))
-				os.Exit(1)
-			}
-			count = 1
-		}
-
-		// Filter by outcoming traffic only.
-		// To filter it, we need to compare MAC addresses from out interface and source MAC.
-		// To access a mac Address we need to get an Ethernet layer.
-		layer := packet.Layer(layers.LayerTypeEthernet)
-
-		ethernet, ok := layer.(*layers.Ethernet)
-		if !ok {
-			slog.Error("Could not get Ethernet layer")
-			continue
-		}
-
-		if !bytes.Equal(ethernet.SrcMAC, iface.HardwareAddr) {
-			// Our interface did not send this packet. It's not outcoming.
-
-		}
-
-		// Now we need to identify IPv4 layer.
-		layer = packet.Layer(layers.LayerTypeIPv4)
-
-		ipv4, ok := layer.(*layers.IPv4)
-		if !ok {
-			// It's not IPv4 traffic.
-			continue
-		}
-
-		if ipv4.DstIP.IsPrivate() {
-			// Do not collect private traffic.
-			continue
-		}
-
-		if ipv4.Protocol != layers.IPProtocolTCP {
-			// Ignore not TCP protocol.
-			continue
-		}
-
-		if ipv4.SrcIP.Equal(net.IPv4(139, 59, 129, 123)) || ipv4.DstIP.Equal(net.IPv4(139, 59, 129, 123)) {
-			// Ignore specific DO IP
-			continue
-		}
-
-		err = pcapWriter.WritePacket(packet.Metadata().CaptureInfo, packet.Data())
-		if err != nil {
-			slog.Error("Could not write a packet to a pcap writer", slog.String("err", err.Error()))
-
-			continue
-		}
-
-		slog.Info("Stored packet", slog.Any("packet", packet))
-
-		// Let's collect ONLY 100K bytes, just for example perposes.
-		 		if fileWriter.Len() > 100000 {
-			break
-		}
-
-		count = count + 1 */
-	}
-
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	wg.Add(1)
 }

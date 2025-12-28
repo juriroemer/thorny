@@ -5,7 +5,7 @@ import (
 )
 
 // src: https://gist.github.com/player0k/038afe3031ee8d0176839a7542c086a5
-func InferDefaultNInterface() *string {
+func InferDefaultNInterface() *net.Interface {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return nil
@@ -20,7 +20,7 @@ func InferDefaultNInterface() *string {
 			for _, addr := range addrs {
 				ipnet, ok := addr.(*net.IPNet)
 				if ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
-					return &iface.Name
+					return &iface
 				}
 			}
 		}

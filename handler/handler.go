@@ -1,12 +1,18 @@
 package handler
 
-import "net"
+import (
+	"fmt"
+	"log/slog"
+	"net"
+)
 
 type Handlers = map[int]CfgHandler
 type HandlerConfig = map[string]any
 type HandlerPlugin interface {
 	Name() string
-	New(config HandlerConfig, l net.Listener) (HandlerInstance, error)
+	New(config HandlerConfig,
+		listener net.Listener,
+		logger *slog.Logger) (HandlerInstance, error)
 }
 
 type CfgHandler struct {
@@ -31,8 +37,10 @@ func NewHandlerRegistry() *HandlerRegistry {
 }
 
 func (f *HandlerRegistry) Init() error {
-	f.Register(HttpHandlerPlugin{})
+	//f.Register(HttpHandlerPlugin{})
 	f.Register(SmtpHandlerPlugin{})
+	f.Register(SshHandlerPlugin{})
+	f.Register(LdapHandlerPlugin{})
 	return nil
 }
 
@@ -44,20 +52,23 @@ func (f *HandlerRegistry) Deregister(name string) {
 	delete(f.handlerPlugins, name)
 }
 
-func (r *HandlerRegistry) Activate(f CfgHandler, l net.Listener) error {
+func (r *HandlerRegistry) Activate(f CfgHandler, listener net.Listener, logger *slog.Logger) error {
 	plugin := r.handlerPlugins[f.Name]
 
-	instance, err := plugin.New(f.Config, l)
+	fmt.Println("activating %s", f.Name)
+
+	instance, err := plugin.New(f.Config, listener, logger)
 	if err != nil {
 		panic(err)
 	}
-
 	r.active[f.Name] = instance
 	return nil
 }
 
 func (f *HandlerRegistry) ServeAll() {
-	for _, h := range f.active {
-		h.Serve()
+	fmt.Println("Serve all")
+	for i, h := range f.active {
+		fmt.Println("Serve %d", i)
+		go h.Serve()
 	}
 }
