@@ -1,24 +1,24 @@
 c2: 127.0.0.1
+output: 1
 network:
   promiscuous: false
 logging:
   snaplen: 1500
   packetsperlogfile: 10
-filters:
-  - name: ipfilter
-    config:
-      ips:
-        #- 128.176.164.92
-        - 10.67.59.246/8
-        #- 128.176.0.0/16
-        #- 185.151.152.0/22
-
-      ## NOTE idee:
-      ## beim parsen optimieren, gucken ob eine range in der anderen drin ist, etc
-#     dest:
-#       - ...
-#     src:
-#       - ...
+tls:
+  organization: 'asd'
+  country: 'das'
+  province: ' das'
+  locality: 'das'
+  streetAddress: 'asd'
+  postalCode: 'ads'
+  commonName: 'adfs'
+  dnsNames:
+    - 'das'
+    - 'das'
+  daysValid: 4
+  certPath: './cert/cert.pem'
+  keyPath: './cert/key.pem'
 
 ## A Map of Handlers. Uses the port a the handler should use as key.
 handlers:
@@ -33,3 +33,23 @@ handlers:
   #25:
   #  name: smtp_handler
   #  config: #TODO catch missing config, make them not panic
+  2222:
+    name: ssh_handler
+    config:
+      values:
+        version: '42'
+  389:
+    name: ldap_handler
+    config:
+      values:
+        fakeSearchresultEntry: 'uid=admin,dc=example,dc=com' # TODO
+
+## Different Filters. Probably to be cut.
+filters:
+  - name: ipfilter
+    config:
+      ips:
+        #- 128.176.164.92
+        #- 10.67.59.246/8
+        #- 128.176.0.0/16
+        #- 185.151.152.0/22
