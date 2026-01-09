@@ -1,6 +1,7 @@
 #!/bin/sh
 
-mkdir /root/config
+mkdir /root/config/ssh
+mkdir /root/config/cert
 echo $1 > /root/config/bucket.txt
 echo $2 > /root/config/storageLoc.txt
 echo $3 > /root/config/storageAccKey.txt
