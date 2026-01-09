@@ -4,7 +4,7 @@ After=network.target
 [Service]
 Restart=always
 RestartSec=30
-ExecStartPre=/bin/mkdir -p /var/log/thorny/
+ExecStartPre=/bin/mkdir -p /var/spool/thorny/
 ExecStart=/usr/local/bin/thorny --config /etc/thorny/config.yaml
 ExecStop=/bin/kill -s TERM $MAINPID
  

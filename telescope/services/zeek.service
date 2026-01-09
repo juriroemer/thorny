@@ -1,0 +1,12 @@
+[Unit]
+After=network.target
+ 
+[Service]
+Restart=always
+RestartSec=30
+ExecStartPre=/bin/mkdir -p /var/spool/zeek/
+ExecStart=/usr/local/bin/zeek -i en0 -C LogAscii::use_json=T LDAP::default_log_search_attributes=T  Log::default_logdir=/var/spool/zeek
+ExecStop=/bin/kill -s TERM $MAINPID
+ 
+[Install]
+WantedBy=multi-user.target
