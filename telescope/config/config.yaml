@@ -5,6 +5,7 @@ network:
 logging:
   snaplen: 1500
   packetsperlogfile: 10
+  log_dir: '/var/spool/thorny'
 tls:
   organization: 'Uni Muenster'
   country: 'Germany'
@@ -16,8 +17,8 @@ tls:
   dnsNames:
     - 'nsec.uni-muenster.de'
   daysValid: 4
-  certPath: './cert/cert.pem'
-  keyPath: './cert/key.pem'
+  certPath: '/root/config/cert/cert.pem'
+  keyPath: '/root/config/cert/key.pem'
 
 ## A Map of Handlers. Uses the port a the handler should use as key.
 handlers:
@@ -30,6 +31,9 @@ handlers:
       values:
         version: 'OpenSSH_8.9p1'
         message_limit: 10
+        id_ed25519: '/root/config/ssh/id_ed25519'
+        id_rsa: '/root/config/ssh/id_rsa'
+        id_ecdsa: '/root/config/ssh/id_ecdsa'
   389:
     name: ldap_handler
     config:

@@ -15,13 +15,15 @@ type Config struct {
 
 	Network struct {
 		Ips         []net.IP
+		PrimaryIP   net.IP
 		Iface       string `yaml:"iface"`
 		Promiscuous bool   `yaml:"promiscuous"`
 	}
 
 	Logging struct {
-		Snaplen           int `yaml:"snaplen"`
-		Packetsperlogfile int `yaml:"packetsperlogfile"`
+		Snaplen           int    `yaml:"snaplen"`
+		Packetsperlogfile int    `yaml:"packetsperlogfile"`
+		LogDir            string `yaml:"log_dir"`
 	}
 
 	Snort struct {
@@ -57,29 +59,22 @@ func NewConfig(configPath *string) (*Config, error) {
 	}
 
 	iface := InferDefaultNInterface()
-	// these might be local ips - how to handle that? set Ips manually?
-	addrs, err := iface.Addrs()
-	if err != nil {
-		slog.Warn("failed to get addresses for interface", "iface", iface.Name, "err", err)
-	} else {
-		for _, a := range addrs {
-			switch v := a.(type) {
-			case *net.IPNet:
-				if v.IP != nil {
-					config.Network.Ips = append(config.Network.Ips, v.IP)
-				}
-			case *net.IPAddr:
-				if v.IP != nil {
-					config.Network.Ips = append(config.Network.Ips, v.IP)
-				}
-			default:
-				slog.Debug("unsupported addr type; skipping", "addr", a)
-			}
+	if iface != nil {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			slog.Warn("failed to get addresses for interface", "iface", iface.Name, "err", err)
+		} else {
+			ips := ExtractIPs(addrs)
+			filtered := FilterSensorIPs(ips)
+			config.Network.Ips = filtered
+			config.Network.PrimaryIP = ChoosePrimaryIP(filtered)
 		}
+	} else {
+		slog.Warn("no default network interface inferred; Network.Ips will be empty")
 	}
 
 	// config defaults; the new yaml fork yaml/go-yaml does not seem to have default values yet :(
-	if config.Network.Iface == "" {
+	if config.Network.Iface == "" && iface != nil {
 		config.Network.Iface = iface.Name
 	}
 

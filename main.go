@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/juriroemer/thorny/config"
 	"github.com/juriroemer/thorny/filter"
@@ -25,8 +29,19 @@ func main() {
 	}
 
 	// LOGGING
-	// TODO add IP to filename, e.g. log-{IP}.jsonl
-	logFile, _ := os.OpenFile("log.jsonl", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// Use sensor IP in filename when available and include timestamp
+	ts := time.Now().Format("2006-01-02T150405")
+	// allow configuration of the logging directory via config.Logging.LogDir
+	logDir := config.Logging.LogDir
+	if logDir == "" {
+		logDir = "."
+	}
+	_ = os.MkdirAll(logDir, 0777)
+	logPath := fmt.Sprintf("%s/log-%s.jsonl", logDir, ts)
+	if config.Network.PrimaryIP != nil {
+		logPath = fmt.Sprintf("%s/log-%s-%s.jsonl", logDir, config.Network.PrimaryIP.String(), ts)
+	}
+	logFile, _ := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	jsonHandler := slog.NewJSONHandler(logFile, &slog.HandlerOptions{
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			switch a.Key {
@@ -36,7 +51,12 @@ func main() {
 			return a
 		},
 	})
-	sensorLogger := slog.New(jsonHandler).With("sensor_ip", "ip") // TODO add ip
+	// Determine sensor IP to include in all logs
+	sensorIP := "unknown"
+	if config.Network.PrimaryIP != nil {
+		sensorIP = config.Network.PrimaryIP.String()
+	}
+	sensorLogger := slog.New(jsonHandler).With("sensor_ip", sensorIP)
 
 	// TODO create certs for ssh and tls, add to context
 	os.MkdirAll("cert", os.ModePerm)
@@ -67,14 +87,25 @@ func main() {
 	for port, h := range config.Handlers {
 		listener, _ := net.Listen("tcp", fmt.Sprintf(":%d", port)) // TODO add error checking
 		portLogger := sensorLogger.With(
-			slog.Int("port", port),
+			slog.Int("sensor_port", port),
 		)
-		hr.Activate(h, listener, portLogger)
+		hr.Activate(port, h, listener, portLogger)
 	}
 
-	go hr.ServeAll()
+	ctx, cancel := context.WithCancel(context.Background())
 
-	var wg sync.WaitGroup
-	defer wg.Wait()
-	wg.Add(1)
+	var wg = &sync.WaitGroup{}
+	hr.ServeAll(ctx, wg)
+
+	termChan := make(chan os.Signal, 1)
+	signal.Notify(termChan, syscall.SIGINT, syscall.SIGTERM)
+
+	<-termChan // Blocks here until interrupted
+
+	// Handle shutdown
+	fmt.Println("*********************************\nShutdown signal received\n*********************************")
+	cancel()  // Signal cancellation to context.Context
+	wg.Wait() // Block here until are workers are done
+
+	fmt.Println("All handlers done, shutting down!")
 }

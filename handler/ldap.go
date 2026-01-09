@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"log"
 	"log/slog"
 	"net"
+	"strconv"
+	"sync"
 	"time"
 
 	// NOTE used go-asn1-ber/asn1-ber because go-ldap/ldap/v3 uses it. standard lib "asn1" might be better, offers Marshaling?
@@ -34,13 +37,17 @@ func (LdapHandlerPlugin) Protocol() string {
 }
 
 type LdapHandlerInstance struct {
+	name     string
 	cfg      LdapHandlerConfig
 	listener net.Listener
 	logger   *slog.Logger
 }
 
+func (l *LdapHandlerInstance) Name() string { return l.name }
+
 func (LdapHandlerPlugin) New(config HandlerConfig, listener net.Listener, logger *slog.Logger) (HandlerInstance, error) {
 	instance := LdapHandlerInstance{
+		name:     LdapHandlerPlugin{}.Name(),
 		listener: listener,
 		logger: logger.With(
 			slog.String("protocol", "ldap"),
@@ -64,7 +71,7 @@ func (lh *LdapHandlerInstance) loadLdapConfig(raw HandlerConfig) error {
 	return nil
 }
 
-func (lh *LdapHandlerInstance) Serve() {
+func (lh *LdapHandlerInstance) Serve(ctx context.Context, wg *sync.WaitGroup) {
 	// Accept connections in a loop and handle each concurrently.
 	fmt.Println("SERVE")
 	cert, err := tls.LoadX509KeyPair("./cert/cert.pem", "./cert/key.pem")
@@ -73,27 +80,65 @@ func (lh *LdapHandlerInstance) Serve() {
 		panic(err)
 	}
 
+	// Allow older TLS versions to be tolerant of some
+	// scanners/probes that don't send modern extensions. Cap to TLS 1.1
+	// to avoid issues with missing signature_algorithms in some probes.
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
+		MinVersion:   tls.VersionTLS10,
+		MaxVersion:   tls.VersionTLS11,
 	}
 
 	fmt.Println("TLS LOADED")
 
-	for {
-		nConn, err := lh.listener.Accept()
-		if err != nil {
-			log.Printf("failed to accept incoming connection: %v", err)
+	acceptChan := make(chan net.Conn, 1)
+	var acceptWg sync.WaitGroup // local WaitGroup for internal goroutines
+
+	acceptWg.Add(1)
+	go func() {
+		defer acceptWg.Done()
+		for {
+			conn, err := lh.listener.Accept()
+			if err != nil {
+				log.Println("[LDAP] ERROR/ENDING LISTENER GOROUTINE")
+				return
+			}
+			acceptChan <- conn
 		}
-		fmt.Println("accepting ldap")
-		go lh.handleConn(nConn, tlsConfig)
+	}()
+
+	defer func() {
+		lh.listener.Close()
+		acceptWg.Wait() // wait for accept goroutine to exit
+		wg.Done()       // then signal parent that Serve is done
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("[LDAP] ENDING SERVE")
+			return // triggers defer and also ends go routine above
+		case conn := <-acceptChan:
+			go lh.handleConn(ctx, conn, tlsConfig)
+		}
 	}
 }
 
-func (lh *LdapHandlerInstance) handleConn(rawConn net.Conn, tlsConfig *tls.Config) {
+func (lh *LdapHandlerInstance) handleConn(ctx context.Context, rawConn net.Conn, tlsConfig *tls.Config) {
 	fmt.Println("HANDLECON")
 
-	connLogger := lh.logger.With("client_ip", rawConn.RemoteAddr().String())
+	// Parse client IP and port
+	clientAddr := rawConn.RemoteAddr().String()
+	clientIP, clientPortStr, _ := net.SplitHostPort(clientAddr)
+	clientPort := 0
+	if p, err := strconv.Atoi(clientPortStr); err == nil {
+		clientPort = p
+	}
+
+	connLogger := lh.logger.With(
+		slog.String("client_ip", clientIP),
+		slog.Int("client_port", clientPort),
+	)
 	sess := NewLdapSession(connLogger, rawConn)
 
 	defer func() {
@@ -101,48 +146,87 @@ func (lh *LdapHandlerInstance) handleConn(rawConn net.Conn, tlsConfig *tls.Confi
 		rawConn.Close()
 	}()
 
+	idleTimeout := 2 * time.Minute
+
 	for {
-		packet, err := ber.ReadPacket(sess.conn)
-		fmt.Printf("new Message with id %d ", sess.numMessages)
-		sess.numMessages += 1
-
-		if err != nil {
-			slog.Info("LDAP client disconnected")
+		select {
+		case <-ctx.Done():
+			sess.disconnectReason = "context_cancelled"
+			slog.Info("LDAP connection shutdown requested")
 			return
-		}
+		default:
+			// Set read deadline for idle timeout
+			rawConn.SetReadDeadline(time.Now().Add(idleTimeout))
 
-		// TODO
-		if len(packet.Children) < 2 {
-			fmt.Println("SHORT PACKAGE")
-			continue
-		}
+			packet, err := ber.ReadPacket(sess.conn)
 
-		msgId := packet.Children[0].Value.(int64)
-		op := packet.Children[1]
+			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					// Check if it's shutdown or idle timeout
+					select {
+					case <-ctx.Done():
+						sess.disconnectReason = "context_cancelled"
+						slog.Info("LDAP connection shutdown during idle")
+						return
+					default:
+						sess.disconnectReason = "idle_timeout"
+						slog.Info("LDAP connection idle timeout")
+						return
+					}
+				}
+				// Connection closed / read error
+				sess.disconnectReason = "client_disconnect"
+				slog.Info("LDAP client disconnected")
+				return
+			}
 
-		err = sess.dispatch(msgId, op, tlsConfig)
-		if err == errStartTLS {
-			continue
-		}
-		if err != nil {
-			return
+			fmt.Printf("new Message with id %d ", sess.numMessages)
+			sess.numMessages += 1
+
+			// TODO MALFORMED PACKET
+			if len(packet.Children) < 2 {
+				fmt.Println("SHORT PACKET")
+				continue
+			}
+
+			msgId := packet.Children[0].Value.(int64)
+			op := packet.Children[1]
+
+			err = sess.dispatch(msgId, op, tlsConfig)
+			if err == errStartTLS {
+				continue
+			}
+			if err == io.EOF {
+				// UnbindRequest was received — treat as graceful client close
+				sess.disconnectReason = "unbind_requested"
+				return
+			}
+			if err != nil {
+				sess.disconnectReason = "dispatch_error"
+				return
+			}
 		}
 	}
 }
 
 type LdapSession struct {
-	conn            net.Conn
-	tlsActive       bool
-	logger          *slog.Logger
-	start           time.Time
-	port            int
-	tlsUsed         bool
-	authAttempted   bool
-	passwordLen     int
-	searchAttempted bool
-	duration        time.Duration
-	numMessages     int // ohne serverseitiges closing
-	bindAttempts    int // ohne serverseitiges closing
+	conn             net.Conn
+	tlsActive        bool
+	logger           *slog.Logger
+	start            time.Time
+	port             int
+	tlsUsed          bool
+	tlsVersion       string
+	tlsCipherSuite   string
+	tlsServerName    string
+	authAttempted    bool
+	loginDN          string
+	password         string
+	searchAttempted  bool
+	duration         time.Duration
+	numMessages      int // ohne serverseitiges closing
+	bindAttempts     int // ohne serverseitiges closing
+	disconnectReason string
 
 	// close if
 	// authAttempted && searchAttempted
@@ -159,20 +243,26 @@ func NewLdapSession(l *slog.Logger, rawConn net.Conn) LdapSession {
 		tlsUsed:         false,
 		bindAttempts:    0,
 		authAttempted:   false,
-		passwordLen:     0,
+		loginDN:         "",
+		password:        "",
 		searchAttempted: false,
 		numMessages:     1,
 	}
 }
 
 func (s *LdapSession) Close() {
-	s.logger.Info("",
-		slog.String("start", s.start.String()),
+	s.logger.Info("ldap_session_end",
+		slog.Int64("ts", s.start.Unix()),
 		slog.Bool("tls", s.tlsUsed),
+		slog.String("tls_version", s.tlsVersion),
+		slog.String("tls_cipher", s.tlsCipherSuite),
+		slog.String("tls_sni", s.tlsServerName),
 		slog.Int("bind_attempts", s.bindAttempts),
 		slog.Bool("auth_attempted", s.authAttempted),
-		slog.Int("pass_len", s.passwordLen),
+		slog.String("login_dn", s.loginDN),
+		slog.String("password", s.password),
 		slog.Bool("search_attempted", s.searchAttempted),
+		slog.String("disconnect_reason", s.disconnectReason),
 		slog.Int64("duration_ms", time.Since(s.start).Milliseconds()),
 		slog.Int("num_messages", s.numMessages),
 	)
@@ -189,6 +279,7 @@ func (s *LdapSession) dispatch(msgId int64, op *ber.Packet, tlsConfig *tls.Confi
 		// UnbindRequest [APPLICATION 2]
 		// https://ldapwiki.com/wiki/Wiki.jsp?page=Unbind%20Request
 	case ber.Tag(ldap.ApplicationUnbindRequest):
+		s.disconnectReason = "unbind_requested"
 		slog.Info("\nLDAP unbind requested")
 		return io.EOF
 
@@ -246,7 +337,8 @@ func (s *LdapSession) handleBind(msgId int64, op *ber.Packet) {
 	// if AuthenticationChoice == simple auth
 	if auth.Tag == ber.Tag(0) {
 		password = auth.Data.String()
-		s.passwordLen = len(password)
+		s.loginDN = dn
+		s.password = password
 		s.authAttempted = true
 	}
 
@@ -283,6 +375,12 @@ func (s *LdapSession) handleSearch(msgId int64, op *ber.Packet) {
 	filter := op.Children[6].Data // TODO parse recursive filters?
 
 	fmt.Printf("LDAP SEARCH base=%q scope=%d filter=%v\n", baseDn, scope, filter)
+	// If this is a RootDSE query (base="", scope=base object), return RootDSE
+	if baseDn == "" && scope == 0 {
+		s.sendRootDSE(msgId)
+		s.sendSearchDone(msgId, ldap.LDAPResultSuccess)
+		return
+	}
 
 	s.sendSearchEntry(msgId)
 	s.sendSearchDone(msgId, ldap.LDAPResultSuccess)
@@ -311,6 +409,45 @@ func (s *LdapSession) sendSearchEntry(msgId int64) {
 
 	attr.AppendChild(values)
 	attrs.AppendChild(attr)
+
+	entry.AppendChild(attrs)
+	msg.AppendChild(entry)
+
+	s.conn.Write(msg.Bytes())
+}
+
+// sendRootDSE returns a minimal, plausible RootDSE so nmap can fingerprint
+// the server as OpenLDAP. This is not exhaustive, just enough for -sV and
+// ldap-rootdse to report a recognizable vendor/version.
+func (s *LdapSession) sendRootDSE(msgId int64) {
+	msg := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "LDAPMessage")
+	msg.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagInteger, msgId, "messageID"))
+
+	entry := ber.Encode(ber.ClassApplication, ber.TypeConstructed, ldap.ApplicationSearchResultEntry, nil, "SearchResultEntry")
+	// RootDSE has empty DN
+	entry.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, "", "objectName"))
+
+	attrs := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "attributes")
+
+	// helper to append attribute with one or more values
+	addAttr := func(name string, values ...string) {
+		attr := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "attribute")
+		attr.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, name, "type"))
+		vals := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSet, nil, "values")
+		for _, v := range values {
+			vals.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, v, "value"))
+		}
+		attr.AppendChild(vals)
+		attrs.AppendChild(attr)
+	}
+
+	// Typical values seen on OpenLDAP
+	addAttr("namingContexts", "dc=example,dc=com")
+	addAttr("supportedLDAPVersion", "3")
+	addAttr("supportedSASLMechanisms", "PLAIN", "LOGIN", "ANONYMOUS")
+	addAttr("supportedExtension", "1.3.6.1.4.1.1466.20037") // StartTLS OID
+	addAttr("vendorName", "OpenLDAP")
+	addAttr("vendorVersion", "2.5.13")
 
 	entry.AppendChild(attrs)
 	msg.AppendChild(entry)
@@ -364,7 +501,12 @@ func (s *LdapSession) handleExtendedRequest(msgId int64, op *ber.Packet, tlsConf
 
 	s.conn = tlsConn
 	s.tlsActive = true
-	slog.Info("LDAP TLS established")
+	// Capture TLS parameters
+	tlsState := tlsConn.ConnectionState()
+	s.tlsVersion = tlsVersionString(tlsState.Version)
+	s.tlsCipherSuite = tls.CipherSuiteName(tlsState.CipherSuite)
+	s.tlsServerName = tlsState.ServerName
+	s.tlsUsed = true
 
 	return errStartTLS
 }

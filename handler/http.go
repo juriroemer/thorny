@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"html/template"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"go.yaml.in/yaml/v4"
@@ -25,21 +27,27 @@ func (HttpHandlerPlugin) Name() string {
 	return "http_handler"
 }
 
+func (h *HttpHandlerInstance) Name() string { return h.name }
+
 type HttpHandlerInstance struct {
 	cfg       HttpHandlerConfig
 	listener  net.Listener
 	templates map[string]func() TemplateConfig
+	logger    *slog.Logger
+	name      string
 }
 
 type TemplateConfig interface {
 	Validate() error
 }
 
-func (HttpHandlerPlugin) New(config HandlerConfig, l net.Listener) (HandlerInstance, error) {
+func (HttpHandlerPlugin) New(config HandlerConfig, l net.Listener, logger *slog.Logger) (HandlerInstance, error) {
 
 	instance := HttpHandlerInstance{
 		listener:  l,
 		templates: make(map[string]func() TemplateConfig),
+		logger:    logger,
+		name:      HttpHandlerPlugin{}.Name(),
 	}
 
 	// register templates
@@ -82,7 +90,7 @@ func (hh *HttpHandlerInstance) RegisterTemplate(id string, tf func() TemplateCon
 	hh.templates[id] = tf
 }
 
-func (hh *HttpHandlerInstance) Serve() {
+func (hh *HttpHandlerInstance) Serve(ctx context.Context, wg *sync.WaitGroup) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", hh.Handler())
 	go func() {

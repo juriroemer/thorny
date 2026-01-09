@@ -22,27 +22,33 @@ tls:
 
 ## A Map of Handlers. Uses the port a the handler should use as key.
 handlers:
-  80:
-    name: http_handler
-    config:
-      template: nginx
-      values:
-        version: 69.42.23 # The nginx version that is set in the  `Server` header, e.g. `version: 1.29.2` -> `Server: nginx/1.29.2`
-        headers: # Map of additional headers you want to deliver
-          Content blabla: 'text/html'
-  #25:
-  #  name: smtp_handler
-  #  config: #TODO catch missing config, make them not panic
+  #  80:
+  #    name: http_handler
+  #    config:
+  #      template: nginx
+  #      values:
+  #        version: 69.42.23 # The nginx version that is set in the  `Server` header, e.g. `version: 1.29.2` -> `Server: nginx/1.29.2`
+  #        headers: # Map of additional headers you want to deliver
+  #          Content blabla: 'text/html'
+  25:
+    name: smtp_handler
+    config: #TODO catch missing config, make them not panic
   2222:
     name: ssh_handler
     config:
       values:
-        version: '42'
+        version: 'OpenSSH_8.9p1'
+        message_limit: 10
   389:
     name: ldap_handler
     config:
       values:
         fakeSearchresultEntry: 'uid=admin,dc=example,dc=com' # TODO
+  23:
+    name: telnet_handler
+    config:
+      values:
+        message_limit: 10
 
 ## Different Filters. Probably to be cut.
 filters:

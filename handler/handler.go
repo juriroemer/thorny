@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
+	"sync"
 )
 
 type Handlers = map[int]CfgHandler
@@ -21,18 +23,19 @@ type CfgHandler struct {
 }
 
 type HandlerInstance interface {
-	Serve()
+	Name() string
+	Serve(context.Context, *sync.WaitGroup)
 }
 
 type HandlerRegistry struct {
 	handlerPlugins map[string]HandlerPlugin
-	active         map[string]HandlerInstance
+	active         map[int]HandlerInstance
 }
 
 func NewHandlerRegistry() *HandlerRegistry {
 	return &HandlerRegistry{
 		handlerPlugins: make(map[string]HandlerPlugin),
-		active:         make(map[string]HandlerInstance),
+		active:         make(map[int]HandlerInstance),
 	}
 }
 
@@ -41,6 +44,7 @@ func (f *HandlerRegistry) Init() error {
 	f.Register(SmtpHandlerPlugin{})
 	f.Register(SshHandlerPlugin{})
 	f.Register(LdapHandlerPlugin{})
+	f.Register(TelnetHandlerPlugin{})
 	return nil
 }
 
@@ -52,23 +56,24 @@ func (f *HandlerRegistry) Deregister(name string) {
 	delete(f.handlerPlugins, name)
 }
 
-func (r *HandlerRegistry) Activate(f CfgHandler, listener net.Listener, logger *slog.Logger) error {
+func (r *HandlerRegistry) Activate(port int, f CfgHandler, listener net.Listener, logger *slog.Logger) error {
 	plugin := r.handlerPlugins[f.Name]
 
-	fmt.Println("activating %s", f.Name)
+	fmt.Printf("activating %s on port %d\n", f.Name, port)
 
 	instance, err := plugin.New(f.Config, listener, logger)
 	if err != nil {
 		panic(err)
 	}
-	r.active[f.Name] = instance
+	r.active[port] = instance
 	return nil
 }
 
-func (f *HandlerRegistry) ServeAll() {
+func (f *HandlerRegistry) ServeAll(ctx context.Context, wg *sync.WaitGroup) {
 	fmt.Println("Serve all")
-	for i, h := range f.active {
-		fmt.Println("Serve %d", i)
-		go h.Serve()
+	for port, h := range f.active {
+		fmt.Printf("Serve %s on port %d\n", h.Name(), port)
+		wg.Add(1)
+		go h.Serve(ctx, wg)
 	}
 }
