@@ -1,0 +1,12 @@
+[Unit]
+After=network.target
+ 
+[Service]
+Restart=always
+RestartSec=30
+ExecStartPre=/bin/mkdir -p /var/log/thorny/
+ExecStart=/usr/local/bin/thorny --config /etc/thorny/config.yaml
+ExecStop=/bin/kill -s TERM $MAINPID
+ 
+[Install]
+WantedBy=multi-user.target

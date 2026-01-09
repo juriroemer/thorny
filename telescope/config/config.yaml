@@ -1,0 +1,48 @@
+c2: 127.0.0.1
+output: 1
+network:
+  promiscuous: false
+logging:
+  snaplen: 1500
+  packetsperlogfile: 10
+tls:
+  organization: 'Uni Muenster'
+  country: 'Germany'
+  province: ' NRW'
+  locality: 'NRW'
+  streetAddress: 'Somestreet'
+  postalCode: '48143'
+  commonName: 'Uni Muenster'
+  dnsNames:
+    - 'nsec.uni-muenster.de'
+  daysValid: 4
+  certPath: './cert/cert.pem'
+  keyPath: './cert/key.pem'
+
+## A Map of Handlers. Uses the port a the handler should use as key.
+handlers:
+  25:
+    name: smtp_handler
+    config:
+  2222:
+    name: ssh_handler
+    config:
+      values:
+        version: 'OpenSSH_8.9p1'
+        message_limit: 10
+  389:
+    name: ldap_handler
+    config:
+      values:
+        fakeSearchresultEntry: 'uid=admin,dc=example,dc=com' # TODO
+  23:
+    name: telnet_handler
+    config:
+      values:
+        message_limit: 10
+
+## Different Filters. Probably to be cut.
+filters:
+  - name: ipfilter
+    config:
+      ips:
