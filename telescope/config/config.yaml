@@ -24,7 +24,7 @@ handlers:
   25:
     name: smtp_handler
     config:
-  2222:
+  22:
     name: ssh_handler
     config:
       values:
