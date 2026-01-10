@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -188,8 +189,14 @@ func (sh *SshHandlerInstance) genEd25519PrivKey() (ssh.Signer, error) {
 		return nil, fmt.Errorf("unable to marshal private key")
 	}
 	privPem := &pem.Block{Type: "PRIVATE KEY", Bytes: privBytes}
+	// Ensure parent directory exists
+	if dir := filepath.Dir(sh.cfg.IdEd25519); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("unable to create parent dir for ed25519 key: %v", err)
+		}
+	}
 	if err := os.WriteFile(sh.cfg.IdEd25519, pem.EncodeToMemory(privPem), 0600); err != nil {
-		return nil, fmt.Errorf("unable to write private key to disc")
+		return nil, fmt.Errorf("unable to write private key to disc: %v", err)
 	}
 
 	signer, err := ssh.NewSignerFromKey(priv)
@@ -218,8 +225,14 @@ func (sh *SshHandlerInstance) genRsaPrivKey() (ssh.Signer, error) {
 
 	privBytes := x509.MarshalPKCS1PrivateKey(priv)
 	privPem := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: privBytes}
+	// Ensure parent directory exists
+	if dir := filepath.Dir(sh.cfg.IdRsa); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("unable to create parent dir for rsa key: %v", err)
+		}
+	}
 	if err := os.WriteFile(sh.cfg.IdRsa, pem.EncodeToMemory(privPem), 0600); err != nil {
-		return nil, fmt.Errorf("unable to write RSA private key to disk")
+		return nil, fmt.Errorf("unable to write RSA private key to disk: %v", err)
 	}
 
 	signer, err := ssh.NewSignerFromKey(priv)
@@ -252,14 +265,21 @@ func (sh *SshHandlerInstance) genEcdsaPrivKey() (ssh.Signer, error) {
 		return nil, fmt.Errorf("unable to marshal ECDSA private key: %v", err)
 	}
 	privPem := &pem.Block{Type: "EC PRIVATE KEY", Bytes: privBytes}
+	// Ensure parent directory exists
+	if dir := filepath.Dir(sh.cfg.IdEcdsa); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("unable to create parent dir for ecdsa key: %v", err)
+		}
+	}
 	if err := os.WriteFile(sh.cfg.IdEcdsa, pem.EncodeToMemory(privPem), 0600); err != nil {
-		return nil, fmt.Errorf("unable to write ECDSA private key to disk")
+		return nil, fmt.Errorf("unable to write ECDSA private key to disk: %v", err)
 	}
 
 	signer, err := ssh.NewSignerFromKey(priv)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create ECDSA signer from private key")
 	}
+	slog.Info("new ecdsa private key generated and written to file")
 	return signer, nil
 }
 
@@ -432,6 +452,7 @@ func (sh *SshHandlerInstance) handleConn(ctx context.Context, nConn net.Conn) {
 			// so the client is clearly disconnecting
 			// https://cs.opensource.google/go/x/crypto/+/master:ssh/messages.go;l=40?q=disconnectMsg&ss=go%2Fx%2Fcrypto
 			// RFC: https://datatracker.ietf.org/doc/html/rfc4253#section-11.1
+			// matching issue https://github.com/jaksi/sshesame/issues/8
 			sess.disconnectReason = "client_disconnect_during_handshake_malformatted"
 			log.Printf("[SSH] Client %s sent malformed disconnect during handshake: %v", clientIP, err)
 			// no sniffing/dump retained (removed)

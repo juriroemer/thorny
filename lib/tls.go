@@ -6,10 +6,10 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"fmt"
 	"math/big"
 	"net"
 	"os"
+	"path/filepath"
 	"time"
 
 	"go.yaml.in/yaml/v4"
@@ -30,10 +30,13 @@ type TlsUserConfig struct {
 	Ips           []net.IP
 }
 
+type ctxKeyTlsConfig struct{}
+var CtxTlsUserConfig = &ctxKeyTlsConfig{}
+
 func NewTlsUserConfig(raw any, ips []net.IP) (*TlsUserConfig, error) {
 	conf := &TlsUserConfig{
 		CertPath:      "./cert/tls.cert",
-		KeyPath:       "/cert/tls.pem",
+		KeyPath:       "./cert/tls.pem",
 		Organization:  "Internet Company",
 		Country:       "DE",
 		Province:      "NRW",
@@ -42,16 +45,14 @@ func NewTlsUserConfig(raw any, ips []net.IP) (*TlsUserConfig, error) {
 		PostalCode:    "48149",
 		CommonName:    "IC",
 		Ips:           ips,
-		//DnsNames:
-		DaysValid: 31,
+		DaysValid:     31,
 	}
-	valuesYaml, _ := yaml.Marshal(raw)
 
+	valuesYaml, _ := yaml.Marshal(raw)
 	if err := yaml.Unmarshal(valuesYaml, conf); err != nil {
 		return nil, err
 	}
 
-	fmt.Println(conf)
 	return conf, nil
 }
 
@@ -141,16 +142,28 @@ func writePEMFiles(
 	certPath, keyPath string,
 ) error {
 
+	// Ensure parent directories exist for both paths.
+	certDir := filepath.Dir(certPath)
+	if err := os.MkdirAll(certDir, 0o755); err != nil {
+		return err
+	}
+	keyDir := filepath.Dir(keyPath)
+	if err := os.MkdirAll(keyDir, 0o755); err != nil {
+		return err
+	}
+
 	certOut, err := os.Create(certPath)
 	if err != nil {
 		return err
 	}
 	defer certOut.Close()
 
-	pem.Encode(certOut, &pem.Block{
+	if err := pem.Encode(certOut, &pem.Block{
 		Type:  "CERTIFICATE",
 		Bytes: certDER,
-	})
+	}); err != nil {
+		return err
+	}
 
 	keyBytes, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
@@ -163,10 +176,12 @@ func writePEMFiles(
 	}
 	defer keyOut.Close()
 
-	pem.Encode(keyOut, &pem.Block{
+	if err := pem.Encode(keyOut, &pem.Block{
 		Type:  "RSA PRIVATE KEY",
 		Bytes: keyBytes,
-	})
+	}); err != nil {
+		return err
+	}
 
 	return nil
 }

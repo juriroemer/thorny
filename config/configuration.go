@@ -23,7 +23,7 @@ type Config struct {
 	Logging struct {
 		Snaplen           int    `yaml:"snaplen"`
 		Packetsperlogfile int    `yaml:"packetsperlogfile"`
-		LogDir            string `yaml:"log_dir"`
+		LogDir            string `yaml:"logDir"`
 	}
 
 	Snort struct {

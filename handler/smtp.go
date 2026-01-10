@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"log"
 	"log/slog"
 	"net"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v4"
+
+	"github.com/juriroemer/thorny/lib"
 )
 
 type SmtpHandlerConfig struct {
@@ -80,20 +83,21 @@ func (SmtpHandlerPlugin) parseConfig(config HandlerConfig) (*SmtpHandlerConfig, 
 func (sh *SmtpHandlerInstance) Serve(ctx context.Context, wg *sync.WaitGroup) {
 	acceptChan := make(chan net.Conn, 1)
 
-	// Load TLS certificate for STARTTLS
-	cert, err := tls.LoadX509KeyPair("./cert/cert.pem", "./cert/key.pem")
-	if err != nil {
-		log.Printf("[SMTP] Failed to load TLS certificate: %v", err)
-		// Continue without TLS, STARTTLS will not work
-	}
-	// Allow older TLS versions to accommodate scanners/clients that omit
-	// signature_algorithms (some TLS 1.2 probes, e.g., masscan). Capping at
-	// TLS 1.1 avoids the missing-signature_algorithms error while still
-	// enabling STARTTLS.
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS10,
-		MaxVersion:   tls.VersionTLS11,
+	// Load TLS certificate for STARTTLS from typed TLS config in context.
+	var tlsConfig *tls.Config
+	if v := ctx.Value(lib.CtxTlsUserConfig); v != nil {
+		if tconf, ok := v.(*lib.TlsUserConfig); ok {
+			cert, err := tls.LoadX509KeyPair(tconf.CertPath, tconf.KeyPath)
+			if err != nil {
+				log.Printf("[SMTP] Failed to load TLS certificate from %s / %s: %v", tconf.CertPath, tconf.KeyPath, err)
+			} else {
+				tlsConfig = &tls.Config{
+					Certificates: []tls.Certificate{cert},
+					MinVersion:   tls.VersionTLS10,
+					MaxVersion:   tls.VersionTLS11,
+				}
+			}
+		}
 	}
 
 	go func() {
@@ -250,7 +254,7 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 			if !tlsActive {
 				writeLine(conn, "250-STARTTLS")
 			}
-			writeLine(conn, "250 AUTH CRAM-MD5 LOGIN PLAIN")
+			writeLine(conn, "250-AUTH LOGIN PLAIN")
 			writeLine(conn, "250-ENHANCEDSTATUSCODES")
 			writeLine(conn, "250-8BITMIME")
 			writeLine(conn, "250 DSN")
@@ -286,7 +290,12 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 			mailFrom = strings.TrimSpace(arg[5:])
 			sess.sender = mailFrom
 			state = "MAIL_RECEIVED"
-			writeLine(conn, "250 2.1.0 Ok")
+
+			sender := mailFrom
+			if !strings.Contains(sender, "<") {
+				sender = "<" + sender + ">"
+			}
+			writeLine(conn, fmt.Sprintf("250 2.1.0 Originator %s ok", sender))
 
 		case "RCPT":
 			sess.commands = append(sess.commands, line)
@@ -303,7 +312,12 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 			rcptTo = append(rcptTo, rcpt)
 			sess.recipients = append(sess.recipients, rcpt)
 			state = "RCPT_RECEIVED"
-			writeLine(conn, "250 2.1.5 Ok")
+
+			recip := rcpt
+			if !strings.Contains(recip, "<") {
+				recip = "<" + recip + ">"
+			}
+			writeLine(conn, fmt.Sprintf("250 2.1.5 Recipient %s ok", recip))
 
 		case "DATA":
 			sess.commands = append(sess.commands, line)
@@ -350,9 +364,14 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 			writeLine(conn, "220 2.7.0 Ready to start TLS")
 			tlsConn := tls.Server(conn, tlsConfig)
 			if err := tlsConn.Handshake(); err != nil {
-				// Keep raw handshake error classification; interpretation happens later
-				sess.disconnectReason = "tls_handshake_error"
-				log.Printf("[SMTP] TLS handshake failed from %s: %v", clientAddr, err)
+				errStr := err.Error()
+				if strings.Contains(errStr, "client offered only unsupported versions") || strings.Contains(errStr, "unsupported versions") {
+					sess.disconnectReason = "tls_unsupported_client_versions"
+					log.Printf("[SMTP] TLS handshake failed (unsupported client versions) from %s: %v", clientAddr, err)
+				} else {
+					sess.disconnectReason = "tls_handshake_error"
+					log.Printf("[SMTP] TLS handshake failed from %s: %v", clientAddr, err)
+				}
 				return
 			}
 			conn = tlsConn
@@ -470,6 +489,11 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 			rcptTo = nil
 			state = "HELO_RECEIVED"
 			writeLine(conn, "250 2.0.0 Ok")
+
+		case "HELP":
+			sess.commands = append(sess.commands, line)
+			writeLine(conn, "214-HELO EHLO MAIL RCPT DATA RSET NOOP QUIT")
+			writeLine(conn, "214 STARTTLS AUTH PLAIN LOGIN")
 
 		default:
 			// Default fallback for unexpected commands

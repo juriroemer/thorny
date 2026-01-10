@@ -16,6 +16,7 @@ import (
 	// NOTE used go-asn1-ber/asn1-ber because go-ldap/ldap/v3 uses it. standard lib "asn1" might be better, offers Marshaling?
 	ber "github.com/go-asn1-ber/asn1-ber"
 	ldap "github.com/go-ldap/ldap/v3"
+	"github.com/juriroemer/thorny/lib"
 )
 
 type LdapHandlerConfig struct {
@@ -72,21 +73,21 @@ func (lh *LdapHandlerInstance) loadLdapConfig(raw HandlerConfig) error {
 }
 
 func (lh *LdapHandlerInstance) Serve(ctx context.Context, wg *sync.WaitGroup) {
-	// Accept connections in a loop and handle each concurrently.
 	fmt.Println("SERVE")
-	cert, err := tls.LoadX509KeyPair("./cert/cert.pem", "./cert/key.pem")
-	if err != nil {
-		fmt.Println("SERVE panic")
-		panic(err)
-	}
-
-	// Allow older TLS versions to be tolerant of some
-	// scanners/probes that don't send modern extensions. Cap to TLS 1.1
-	// to avoid issues with missing signature_algorithms in some probes.
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS10,
-		MaxVersion:   tls.VersionTLS11,
+	var tlsConfig *tls.Config
+	if v := ctx.Value(lib.CtxTlsUserConfig); v != nil {
+		if tconf, ok := v.(*lib.TlsUserConfig); ok {
+			cert, err := tls.LoadX509KeyPair(tconf.CertPath, tconf.KeyPath)
+			if err != nil {
+				log.Printf("[LDAP] Failed to load TLS certificate from %s / %s: %v", tconf.CertPath, tconf.KeyPath, err)
+			} else {
+				tlsConfig = &tls.Config{
+					Certificates: []tls.Certificate{cert},
+					MinVersion:   tls.VersionTLS10,
+					MaxVersion:   tls.VersionTLS11,
+				}
+			}
+		}
 	}
 
 	fmt.Println("TLS LOADED")

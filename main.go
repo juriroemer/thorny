@@ -62,7 +62,7 @@ func main() {
 	os.MkdirAll("cert", os.ModePerm)
 	tlsUserConf, err := lib.NewTlsUserConfig(config.Tls, config.Network.Ips)
 	if err := lib.GenerateSelfSignedCert(tlsUserConf); err != nil {
-
+		panic(err)
 	}
 
 	/* go func() {
@@ -85,7 +85,11 @@ func main() {
 	hr.Init()
 
 	for port, h := range config.Handlers {
-		listener, _ := net.Listen("tcp", fmt.Sprintf(":%d", port)) // TODO add error checking
+		listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to listen on port %d: %v\n", port, err)
+			os.Exit(1)
+		}
 		portLogger := sensorLogger.With(
 			slog.Int("sensor_port", port),
 		)
@@ -93,6 +97,8 @@ func main() {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	// attach the fully parsed TLS user config into the context for handlers
+	ctx = context.WithValue(ctx, lib.CtxTlsUserConfig, tlsUserConf)
 
 	var wg = &sync.WaitGroup{}
 	hr.ServeAll(ctx, wg)

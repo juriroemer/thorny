@@ -5,18 +5,18 @@ network:
 logging:
   snaplen: 1500
   packetsperlogfile: 10
+  logDir: './log'
 tls:
-  organization: 'asd'
-  country: 'das'
-  province: ' das'
-  locality: 'das'
-  streetAddress: 'asd'
-  postalCode: 'ads'
-  commonName: 'adfs'
+  organization: 'Uni Muenster'
+  country: 'Germany'
+  province: ' NRW'
+  locality: 'NRW'
+  streetAddress: 'Somestreet'
+  postalCode: '48143'
+  commonName: 'Uni Muenster'
   dnsNames:
-    - 'das'
-    - 'das'
-  daysValid: 4
+    - 'nsec.uni-muenster.de'
+  daysValid: 31
   certPath: './cert/cert.pem'
   keyPath: './cert/key.pem'
 
@@ -39,6 +39,9 @@ handlers:
       values:
         version: 'OpenSSH_8.9p1'
         message_limit: 10
+        id_ed25519: './ssh/id_ed25519'
+        id_rsa: './ssh/id_rsa'
+        id_ecdsa: './ssh/id_ecdsa'
   389:
     name: ldap_handler
     config:
