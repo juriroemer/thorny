@@ -15,9 +15,13 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
+// This handler was ultimatively not used or required, as the thesis scope changed
+// It can serve http templates, `http_templates/nginx.tmpl` emulates a nginx welcome page
+// Included for completeness
+
 type HttpHandlerConfig struct {
 	Template string         `yaml:"template"`
-	Values   TemplateConfig `yaml:"values"` // FIXME bad name
+	Values   TemplateConfig `yaml:"values"`
 }
 
 type HttpHandlerPlugin struct {

@@ -13,10 +13,12 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
+// Telnet config struct
 type TelnetHandlerConfig struct {
 	MessageLimit int `yaml:"message_limit"`
 }
 
+// Validate validates the handler config
 func (c *TelnetHandlerConfig) Validate() error {
 	if c.MessageLimit <= 0 {
 		c.MessageLimit = 10 // default to 10 messages if not specified
@@ -24,17 +26,21 @@ func (c *TelnetHandlerConfig) Validate() error {
 	return nil
 }
 
+// Telnet handler struct
 type TelnetHandlerPlugin struct {
 }
 
+// Name returns the handlers name
 func (TelnetHandlerPlugin) Name() string {
 	return "telnet_handler"
 }
 
+// Name returns the name of the protocol the handlers implements
 func (TelnetHandlerPlugin) Protocol() string {
 	return "telnet"
 }
 
+// The LDAP handler instance struct
 type TelnetHandlerInstance struct {
 	name     string
 	cfg      TelnetHandlerConfig
@@ -42,8 +48,10 @@ type TelnetHandlerInstance struct {
 	logger   *slog.Logger
 }
 
+// Name returns the handler name, wraps TelnetHandlerPlugin.Name()
 func (t *TelnetHandlerInstance) Name() string { return t.name }
 
+// New creates a new handler plugin instance
 func (TelnetHandlerPlugin) New(config HandlerConfig, listener net.Listener, logger *slog.Logger) (HandlerInstance, error) {
 	instance := TelnetHandlerInstance{
 		name:     TelnetHandlerPlugin{}.Name(),
@@ -60,6 +68,7 @@ func (TelnetHandlerPlugin) New(config HandlerConfig, listener net.Listener, logg
 	return &instance, nil
 }
 
+// loadTelnetConfig loads the Telnet config
 func (th *TelnetHandlerInstance) loadTelnetConfig(raw HandlerConfig) error {
 	cfg := &TelnetHandlerConfig{}
 	valuesRaw := raw["values"]
@@ -78,6 +87,7 @@ func (th *TelnetHandlerInstance) loadTelnetConfig(raw HandlerConfig) error {
 	return nil
 }
 
+// Serves handles incoming connections
 func (th *TelnetHandlerInstance) Serve(ctx context.Context, wg *sync.WaitGroup) {
 	acceptChan := make(chan net.Conn, 1)
 	var acceptWg sync.WaitGroup
@@ -88,7 +98,7 @@ func (th *TelnetHandlerInstance) Serve(ctx context.Context, wg *sync.WaitGroup) 
 		for {
 			conn, err := th.listener.Accept()
 			if err != nil {
-				log.Println("[TELNET] ERROR/ENDING LISTENER GOROUTINE")
+				log.Println("[TELNET] Listener Goroutine ended")
 				return
 			}
 			acceptChan <- conn
@@ -104,7 +114,7 @@ func (th *TelnetHandlerInstance) Serve(ctx context.Context, wg *sync.WaitGroup) 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("[TELNET] ENDING SERVE")
+			log.Println("[TELNET] No longer serving")
 			return
 		case conn := <-acceptChan:
 			go th.handleConn(ctx, conn)
@@ -112,7 +122,7 @@ func (th *TelnetHandlerInstance) Serve(ctx context.Context, wg *sync.WaitGroup) 
 	}
 }
 
-// handleConn accepts a telnet connection, reads and logs messages,
+// handleConn accepts a TCP connection, reads and logs messages,
 // and disconnects after message limit or idle timeout.
 func (th *TelnetHandlerInstance) handleConn(ctx context.Context, nConn net.Conn) {
 	defer nConn.Close()
@@ -134,7 +144,7 @@ func (th *TelnetHandlerInstance) handleConn(ctx context.Context, nConn net.Conn)
 		messages:   make([]string, 0),
 	}
 
-	// Defer structured logging of session when connection ends
+	// Defer logging of session when connection ends
 	defer func() {
 		sess.duration = time.Since(sess.start)
 		sess.logger.Info("telnet_session_end",
@@ -150,7 +160,7 @@ func (th *TelnetHandlerInstance) handleConn(ctx context.Context, nConn net.Conn)
 		)
 	}()
 
-	// Send a familiar login banner and prompt
+	// Send a static login banner and prompt
 	banner := "Debian GNU/Linux 11 \n\n"
 	nConn.Write([]byte(banner))
 	nConn.Write([]byte("srv01 login: "))
@@ -194,7 +204,6 @@ func (th *TelnetHandlerInstance) handleConn(ctx context.Context, nConn net.Conn)
 					state = "await_cmd"
 					continue
 				case "await_cmd":
-					// Count and log post-login commands only
 					sess.messageCount++
 					sess.messages = append(sess.messages, line)
 
@@ -205,11 +214,11 @@ func (th *TelnetHandlerInstance) handleConn(ctx context.Context, nConn net.Conn)
 						return
 					}
 
-					// Minimal shell-like response
+					// Static shell-prompt
 					nConn.Write([]byte("bash: command not found\r\n"))
 					nConn.Write([]byte("srv01:~$ "))
 				default:
-					// Generic echo for any unexpected state
+					// Default: echo
 					nConn.Write([]byte(line))
 				}
 
@@ -220,14 +229,13 @@ func (th *TelnetHandlerInstance) handleConn(ctx context.Context, nConn net.Conn)
 					return
 				}
 			} else {
-				// Scanner failed or connection closed
+				// Connection closed
 				if scanner.Err() != nil {
 					netErr := scanner.Err()
 					if netErr, ok := netErr.(net.Error); ok && netErr.Timeout() {
 						sess.disconnectReason = "idle_timeout"
 						log.Printf("[TELNET] %s idle timeout", sess.clientIP)
 					} else {
-						// RST / broken pipe disconnect by client
 						sess.disconnectReason = "read_error"
 						log.Printf("[TELNET] %s read error: %v", sess.clientIP, scanner.Err())
 					}
@@ -242,6 +250,7 @@ func (th *TelnetHandlerInstance) handleConn(ctx context.Context, nConn net.Conn)
 	}
 }
 
+// TelnetSession holds the log for a single session
 type TelnetSession struct {
 	start            time.Time
 	duration         time.Duration

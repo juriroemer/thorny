@@ -2,6 +2,9 @@ package handler
 
 import "fmt"
 
+// Not used in the final thesis, included for completeness
+// Holds instance attributes for the http handler nginx template
+
 func NginxTemplateFactory() func() TemplateConfig {
 	return func() TemplateConfig {
 		return &NginxConfig{

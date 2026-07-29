@@ -10,6 +10,8 @@ import (
 
 type Handlers = map[int]CfgHandler
 type HandlerConfig = map[string]any
+
+// The interface all handler plugins must implement
 type HandlerPlugin interface {
 	Name() string
 	New(config HandlerConfig,
@@ -17,21 +19,25 @@ type HandlerPlugin interface {
 		logger *slog.Logger) (HandlerInstance, error)
 }
 
+// Config handler struct
 type CfgHandler struct {
 	Name   string        `yaml:"name"`
 	Config HandlerConfig `yaml:"config"`
 }
 
+// The interface handler instances implement
 type HandlerInstance interface {
 	Name() string
 	Serve(context.Context, *sync.WaitGroup)
 }
 
+// The registry that holds the handler plugins
 type HandlerRegistry struct {
 	handlerPlugins map[string]HandlerPlugin
 	active         map[int]HandlerInstance
 }
 
+// NewHandlerRegistry constructs a HandlerRegistry
 func NewHandlerRegistry() *HandlerRegistry {
 	return &HandlerRegistry{
 		handlerPlugins: make(map[string]HandlerPlugin),
@@ -39,6 +45,7 @@ func NewHandlerRegistry() *HandlerRegistry {
 	}
 }
 
+// Init registers all available handlers
 func (f *HandlerRegistry) Init() error {
 	//f.Register(HttpHandlerPlugin{})
 	f.Register(SmtpHandlerPlugin{})
@@ -48,14 +55,17 @@ func (f *HandlerRegistry) Init() error {
 	return nil
 }
 
+// Register registers individual handler plugins
 func (f *HandlerRegistry) Register(p HandlerPlugin) {
 	f.handlerPlugins[p.Name()] = p
 }
 
+// Derigister removes a handler plugin from the handler registry
 func (f *HandlerRegistry) Deregister(name string) {
 	delete(f.handlerPlugins, name)
 }
 
+// Activate initiualizes a new handler instance with its configuration, listener and logger
 func (r *HandlerRegistry) Activate(port int, f CfgHandler, listener net.Listener, logger *slog.Logger) error {
 	plugin := r.handlerPlugins[f.Name]
 
@@ -69,6 +79,7 @@ func (r *HandlerRegistry) Activate(port int, f CfgHandler, listener net.Listener
 	return nil
 }
 
+// ServeAll makes all active handlers serve connections
 func (f *HandlerRegistry) ServeAll(ctx context.Context, wg *sync.WaitGroup) {
 	fmt.Println("Serve all")
 	for port, h := range f.active {

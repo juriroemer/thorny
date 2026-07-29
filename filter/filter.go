@@ -4,6 +4,9 @@ import (
 	"github.com/google/gopacket"
 )
 
+// Filter plugins were not required in the final version of the thesis, still included for completeness.
+// The handler plugin system is based on this
+
 type FilterConfig interface{}
 type FilterPlugin interface {
 	Name() string

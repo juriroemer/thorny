@@ -27,6 +27,7 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
+// SSH config struct
 type SshHandlerConfig struct {
 	Version      string `yaml:"version"`
 	MessageLimit int    `yaml:"message_limit"`
@@ -36,6 +37,7 @@ type SshHandlerConfig struct {
 	ServerCfg    ssh.ServerConfig
 }
 
+// Validate validates the SSH config
 func (c *SshHandlerConfig) Validate() error {
 	if c.Version == "" {
 		return fmt.Errorf("ssh version required")
@@ -46,17 +48,21 @@ func (c *SshHandlerConfig) Validate() error {
 	return nil
 }
 
+// SSH handler struct
 type SshHandlerPlugin struct {
 }
 
+// Name returns the handlers name
 func (SshHandlerPlugin) Name() string {
 	return "ssh_handler"
 }
 
+// Name returns the name of the protocol the handlers implements
 func (SshHandlerPlugin) Protocol() string {
 	return "ssh"
 }
 
+// The SSH handler instance struct
 type SshHandlerInstance struct {
 	name     string
 	cfg      SshHandlerConfig
@@ -64,8 +70,10 @@ type SshHandlerInstance struct {
 	logger   *slog.Logger
 }
 
+// Name returns the handler name, wraps SshHandlerPlugin.Name()
 func (s *SshHandlerInstance) Name() string { return s.name }
 
+// New creates a new handler plugin instance
 func (SshHandlerPlugin) New(config HandlerConfig, listener net.Listener, logger *slog.Logger) (HandlerInstance, error) {
 	instance := SshHandlerInstance{
 		name:     SshHandlerPlugin{}.Name(),
@@ -82,6 +90,7 @@ func (SshHandlerPlugin) New(config HandlerConfig, listener net.Listener, logger 
 	return &instance, nil
 }
 
+// loadLdapConfig loads/parses the LDAP config from yaml
 func (sh *SshHandlerInstance) loadSshConfig(raw HandlerConfig) error {
 	cfg := &SshHandlerConfig{}
 	fmt.Println(raw)
@@ -110,9 +119,9 @@ func (sh *SshHandlerInstance) loadSshConfig(raw HandlerConfig) error {
 		cfg.IdEcdsa = "id_ecdsa"
 	}
 
-	// assign into instance early so helper methods can use cfg values
 	sh.cfg = *cfg
 
+	// Configure SSH server
 	cfg.ServerCfg = ssh.ServerConfig{
 		ServerVersion: fmt.Sprintf("SSH-2.0-%s", cfg.Version),
 		NoClientAuth:  false, // Allow client auth (password callback will handle)
@@ -125,14 +134,14 @@ func (sh *SshHandlerInstance) loadSshConfig(raw HandlerConfig) error {
 		slog.Warn("Failed to load/generate ed25519 host key", "error", edErr)
 	}
 
-	// Additionally load/generate an RSA host key for broader client compatibility
+	// Load rsa host key (generate if missing)
 	if rsaKey, rsaErr := sh.loadRsaPrivKey(); rsaErr == nil {
 		cfg.ServerCfg.AddHostKey(rsaKey)
 	} else {
 		slog.Warn("Failed to load/generate RSA host key", "error", rsaErr)
 	}
 
-	// Additionally load/generate an ECDSA host key for broader client compatibility
+	// Load ECDSA host key (generate if missing)
 	if ecdsaKey, ecdsaErr := sh.loadEcdsaPrivKey(); ecdsaErr == nil {
 		cfg.ServerCfg.AddHostKey(ecdsaKey)
 	} else {
@@ -158,6 +167,7 @@ func (sh *SshHandlerInstance) loadSshConfig(raw HandlerConfig) error {
 	return nil
 }
 
+// loadSigner loads provate keys
 func loadSigner(path string) (ssh.Signer, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -177,6 +187,7 @@ func (sh *SshHandlerInstance) loadEd25519PrivKey() (ssh.Signer, error) {
 	return private, nil
 }
 
+// genEd25519PrivKey generates and saves id_ed25519 private keys to disc
 func (sh *SshHandlerInstance) genEd25519PrivKey() (ssh.Signer, error) {
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -189,7 +200,7 @@ func (sh *SshHandlerInstance) genEd25519PrivKey() (ssh.Signer, error) {
 		return nil, fmt.Errorf("unable to marshal private key")
 	}
 	privPem := &pem.Block{Type: "PRIVATE KEY", Bytes: privBytes}
-	// Ensure parent directory exists
+
 	if dir := filepath.Dir(sh.cfg.IdEd25519); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("unable to create parent dir for ed25519 key: %v", err)
@@ -217,6 +228,7 @@ func (sh *SshHandlerInstance) loadRsaPrivKey() (ssh.Signer, error) {
 	return private, nil
 }
 
+// genRsaPrivKey generates and saves rsa private keys to disc
 func (sh *SshHandlerInstance) genRsaPrivKey() (ssh.Signer, error) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -225,7 +237,7 @@ func (sh *SshHandlerInstance) genRsaPrivKey() (ssh.Signer, error) {
 
 	privBytes := x509.MarshalPKCS1PrivateKey(priv)
 	privPem := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: privBytes}
-	// Ensure parent directory exists
+
 	if dir := filepath.Dir(sh.cfg.IdRsa); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("unable to create parent dir for rsa key: %v", err)
@@ -253,6 +265,7 @@ func (sh *SshHandlerInstance) loadEcdsaPrivKey() (ssh.Signer, error) {
 	return private, nil
 }
 
+// genEcdsaPrivKey generates and saves id_ecdsa private keys to disc
 func (sh *SshHandlerInstance) genEcdsaPrivKey() (ssh.Signer, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -265,7 +278,7 @@ func (sh *SshHandlerInstance) genEcdsaPrivKey() (ssh.Signer, error) {
 		return nil, fmt.Errorf("unable to marshal ECDSA private key: %v", err)
 	}
 	privPem := &pem.Block{Type: "EC PRIVATE KEY", Bytes: privBytes}
-	// Ensure parent directory exists
+
 	if dir := filepath.Dir(sh.cfg.IdEcdsa); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("unable to create parent dir for ecdsa key: %v", err)
@@ -292,6 +305,7 @@ type bannerConn struct {
 	off int
 }
 
+// Read reads initial buffer to extract SSH client banner
 func (b *bannerConn) Read(p []byte) (int, error) {
 	if b.off < len(b.buf) {
 		n := copy(p, b.buf[b.off:])
@@ -301,9 +315,10 @@ func (b *bannerConn) Read(p []byte) (int, error) {
 	return b.Conn.Read(p)
 }
 
+// Serves handles incoming connections
 func (sh *SshHandlerInstance) Serve(ctx context.Context, wg *sync.WaitGroup) {
 	acceptChan := make(chan net.Conn, 1)
-	var acceptWg sync.WaitGroup // local WaitGroup for internal goroutines
+	var acceptWg sync.WaitGroup
 
 	acceptWg.Add(1)
 	go func() {
@@ -311,13 +326,14 @@ func (sh *SshHandlerInstance) Serve(ctx context.Context, wg *sync.WaitGroup) {
 		for {
 			conn, err := sh.listener.Accept()
 			if err != nil {
-				log.Println("[SSH] ERROR/ENDING LISTENER GOROUTINE")
+				log.Println("[SSH] Listener Goroutine ended")
 				return
 			}
 			acceptChan <- conn
 		}
 	}()
 
+	// Monitor context cancellation
 	defer func() {
 		sh.listener.Close()
 		acceptWg.Wait() // wait for accept goroutine to exit
@@ -327,7 +343,7 @@ func (sh *SshHandlerInstance) Serve(ctx context.Context, wg *sync.WaitGroup) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("[SSH] ENDING SERVE")
+			log.Println("[SSH] no longer serving")
 			return // triggers defer and also ends go routine above
 		case conn := <-acceptChan:
 			go sh.handleConn(ctx, conn)
@@ -336,8 +352,7 @@ func (sh *SshHandlerInstance) Serve(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 // handleConn performs the SSH handshake and services channels/requests
-// for a single net.Conn. It's safe to run concurrently for multiple
-// accepted connections.
+// for a single net.Conn.
 func (sh *SshHandlerInstance) handleConn(ctx context.Context, nConn net.Conn) {
 	defer nConn.Close()
 
@@ -349,7 +364,7 @@ func (sh *SshHandlerInstance) handleConn(ctx context.Context, nConn net.Conn) {
 		clientPort = p
 	}
 
-	// Initialize session for logging (before SSH handshake)
+	// Initialize session for logging
 	sess := &SshSession{
 		start:      time.Now(),
 		clientIP:   clientIP,
@@ -358,7 +373,7 @@ func (sh *SshHandlerInstance) handleConn(ctx context.Context, nConn net.Conn) {
 		messages:   make([]string, 0),
 	}
 
-	// Defer structured logging of session when connection ends
+	// Defer logging of session when connection ends
 	defer func() {
 		sess.duration = time.Since(sess.start)
 		sess.logger.Info("ssh_session_end",
@@ -402,15 +417,13 @@ func (sh *SshHandlerInstance) handleConn(ctx context.Context, nConn net.Conn) {
 		}
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				// no banner received in time; proceed without it
 				break
 			}
-			// other read error — proceed and let NewServerConn handle it
 			break
 		}
 	}
 
-	// Store banner string in session for structured logging
+	// Store banner string in session for logging
 	if len(bannerBuf) > 0 {
 		sess.clientBanner = strings.TrimRight(string(bannerBuf), "\r\n")
 	}
@@ -432,7 +445,7 @@ func (sh *SshHandlerInstance) handleConn(ctx context.Context, nConn net.Conn) {
 
 		log.Printf("[SSH] Login attempt: %s with password %s", c.User(), string(pass))
 
-		// Accept all passwords (honeypot behavior)
+		// All credentials are accepted
 		return nil, nil
 	}
 
@@ -455,7 +468,6 @@ func (sh *SshHandlerInstance) handleConn(ctx context.Context, nConn net.Conn) {
 			// matching issue https://github.com/jaksi/sshesame/issues/8
 			sess.disconnectReason = "client_disconnect_during_handshake_malformatted"
 			log.Printf("[SSH] Client %s sent malformed disconnect during handshake: %v", clientIP, err)
-			// no sniffing/dump retained (removed)
 		} else if err.Error() == "EOF" {
 			sess.disconnectReason = "client_disconnect_during_handshake"
 			log.Printf("[SSH] Client %s disconnected during handshake (EOF)", clientIP)
@@ -465,20 +477,16 @@ func (sh *SshHandlerInstance) handleConn(ctx context.Context, nConn net.Conn) {
 		}
 		return
 	}
-	//log.Printf("[SSH] Logged in user %s", conn.User())
-
-	// Handshake completed
 
 	var wg sync.WaitGroup
 
-	// Service global out-of-band requests for this connection.
 	wg.Add(1)
 	go func() {
 		ssh.DiscardRequests(reqs)
 		wg.Done()
 	}()
 
-	// Service channels for this connection.
+	// Service channels for connection.
 	for {
 		select {
 		case <-ctx.Done():
@@ -487,7 +495,7 @@ func (sh *SshHandlerInstance) handleConn(ctx context.Context, nConn net.Conn) {
 			return
 		case newChannel, ok := <-chans:
 			if !ok {
-				// Connection closed (peer dropped the connection)
+				// Connection closed (client dropped connection)
 				sess.disconnectReason = "client_disconnect"
 				return
 			}
@@ -523,11 +531,14 @@ func (sh *SshHandlerInstance) handleConn(ctx context.Context, nConn net.Conn) {
 						}
 
 						// Read commands from shell in a loop
-						term := terminal.NewTerminal(ch, "root@srv01:~# ")
+						prompt_symbol := "$"
+						if sess.loginUsername == "root" {
+							prompt_symbol = "#"
+						}
+						term := terminal.NewTerminal(ch, fmt.Sprintf("%s@srv01:~%s ", sess.loginUsername, prompt_symbol)) // TODO better: use the actual username thats 'logged in'
 						for {
 							line, err := term.ReadLine()
 							if err != nil {
-								// Client disconnected or error
 								if sess.messageCount > 0 {
 									sess.disconnectReason = "shell_session_ended"
 								} else {
@@ -558,7 +569,7 @@ func (sh *SshHandlerInstance) handleConn(ctx context.Context, nConn net.Conn) {
 							sess.messages = append(sess.messages, line)
 							log.Printf("[SSH] %s shell command: %s", sess.clientIP, line)
 
-							// Send response
+							// Send static response
 							term.Write([]byte("bash: command not found\r\n"))
 
 							// Check message limit
@@ -571,7 +582,7 @@ func (sh *SshHandlerInstance) handleConn(ctx context.Context, nConn net.Conn) {
 							}
 						}
 					case "exec":
-						// Client tried to execute a command - log it and stop
+						// Client attempted to execute a command - log it and close connection immediately
 						sess.commandAttempted = true
 						sess.commandType = "exec"
 						sess.commandData = string(req.Payload)
@@ -579,12 +590,12 @@ func (sh *SshHandlerInstance) handleConn(ctx context.Context, nConn net.Conn) {
 						if req.WantReply {
 							req.Reply(true, nil)
 						}
-						// Log and close connection immediately
+						
 						log.Printf("[SSH] %s attempted exec: %s", sess.clientIP, sess.commandData)
 						conn.Close()
 						return
 					case "subsystem":
-						// Client requested subsystem (sftp, etc)
+						// Client requested subsystem (sftp, etc) - log and close connection immediately
 						sess.commandAttempted = true
 						sess.commandType = "subsystem"
 						sess.commandData = string(req.Payload)
@@ -592,7 +603,7 @@ func (sh *SshHandlerInstance) handleConn(ctx context.Context, nConn net.Conn) {
 						if req.WantReply {
 							req.Reply(false, nil)
 						}
-						// Log and close connection immediately
+						
 						log.Printf("[SSH] %s attempted subsystem: %s", sess.clientIP, sess.commandData)
 						conn.Close()
 						return
@@ -616,19 +627,16 @@ type SshSession struct {
 	logger       *slog.Logger
 	clientBanner string
 
-	// Authentication tracking
 	loginAttempted bool
 	loginUsername  string
 	loginPassword  string
 
-	// Command execution tracking
 	commandAttempted bool
 	commandType      string // "shell", "exec", "subsystem", etc.
-	commandData      string // actual command data
+	commandData      string // command data for exec and subsystem
 	channelsOpened   int
 	messageCount     int
-	messages         []string
+	messages         []string // shell messages
 
-	// Disconnect reason
 	disconnectReason string
 }

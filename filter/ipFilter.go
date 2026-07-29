@@ -10,6 +10,9 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
+// Filter plugins were not required in the final version of the thesis, still included for completeness.
+// The handler plugin system is based on this
+
 type IpFilterConfig struct {
 	Ips  []net.IP
 	Nets []net.IPNet
@@ -40,9 +43,6 @@ func parseConfig(config FilterConfig) (*IpFilterConfig, error) {
 	var nets []net.IPNet
 	var cfg CfgIpFilter
 
-	// Marshalling and Unmarshalling seems to be the easiest way to do this, unfortunately.
-	// Anything else requires tons of manual type checking.
-	// TODO: decide if this is the way to go or if i should use a custom marshaller etc
 	b, err := yaml.Marshal(config)
 	if err != nil {
 		return nil, err

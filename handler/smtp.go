@@ -21,20 +21,25 @@ import (
 	"github.com/juriroemer/thorny/lib"
 )
 
+// SMTP config struct
 type SmtpHandlerConfig struct {
 }
 
+// SMTP handler struct
 type SmtpHandlerPlugin struct {
 }
 
+// Name returns the handlers name
 func (SmtpHandlerPlugin) Name() string {
 	return "smtp_handler"
 }
 
+// Name returns the name of the protocol the handlers implements
 func (SmtpHandlerPlugin) Protocol() string {
 	return "smtp"
 }
 
+// The SMTP handler instance struct
 type SmtpHandlerInstance struct {
 	name     string
 	cfg      SmtpHandlerConfig // TODO remove cfg if not necessary
@@ -42,8 +47,10 @@ type SmtpHandlerInstance struct {
 	logger   *slog.Logger
 }
 
+// Name returns the handler name, wraps SmtpHandlerPlugin.Name()
 func (s *SmtpHandlerInstance) Name() string { return s.name }
 
+// New creates a new handler plugin instance
 func (SmtpHandlerPlugin) New(config HandlerConfig, listener net.Listener, logger *slog.Logger) (HandlerInstance, error) {
 	cfg, err := SmtpHandlerPlugin{}.parseConfig(config)
 	if err != nil {
@@ -59,8 +66,9 @@ func (SmtpHandlerPlugin) New(config HandlerConfig, listener net.Listener, logger
 	}, nil
 }
 
+// parseConfig parses the yaml SMTP config part
 func (SmtpHandlerPlugin) parseConfig(config HandlerConfig) (*SmtpHandlerConfig, error) {
-	// Gracefully handle missing or empty config blocks.
+	// Handle missing or empty config blocks.
 	if config == nil {
 		return &SmtpHandlerConfig{}, nil
 	}
@@ -80,6 +88,7 @@ func (SmtpHandlerPlugin) parseConfig(config HandlerConfig) (*SmtpHandlerConfig, 
 	return &cfg, nil
 }
 
+// Serves handles incoming connections
 func (sh *SmtpHandlerInstance) Serve(ctx context.Context, wg *sync.WaitGroup) {
 	acceptChan := make(chan net.Conn, 1)
 
@@ -100,11 +109,12 @@ func (sh *SmtpHandlerInstance) Serve(ctx context.Context, wg *sync.WaitGroup) {
 		}
 	}
 
+	// accept connections
 	go func() {
 		for {
 			conn, err := sh.listener.Accept()
 			if err != nil {
-				log.Println("[SMTP] ERROR/ENDING LISTENER GOROUTINE")
+				log.Println("[SMTP] ENDING LISTENER GOROUTINE")
 				return
 			}
 			acceptChan <- conn
@@ -120,7 +130,7 @@ func (sh *SmtpHandlerInstance) Serve(ctx context.Context, wg *sync.WaitGroup) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("[SMTP] ENDING SERVE")
+			log.Println("[SMTP] No longer serving")
 			return // triggers defer and also ends go routine above
 		case conn := <-acceptChan:
 			go sh.handleConn(ctx, conn, tlsConfig)
@@ -128,6 +138,7 @@ func (sh *SmtpHandlerInstance) Serve(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
+// handleConn handles a individual SMTP connections
 func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tlsConfig *tls.Config) {
 	defer conn.Close()
 
@@ -141,7 +152,7 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 		clientPort = p
 	}
 
-	// Initialize session for logging/metadata
+	// Initialize session struct  for logging/metadata
 	sess := &SmtpSession{
 		start:          time.Now(),
 		clientIP:       clientIP,
@@ -188,14 +199,13 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 	writeLine(conn, "220 nsec.uni-muenster.de ESMTP Postfix")
 
 	reader := bufio.NewReader(conn)
-	state := "INIT"
+	state := "INIT" // SMTP state machine
 	var mailFrom string
 	var rcptTo []string
 	tlsActive := false
 	authUser := ""
 
 	for {
-		// Set short read deadline for interruptible reads
 		conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 
 		lineBytes, err := reader.ReadBytes('\n')
@@ -208,12 +218,10 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 					log.Println("[SMTP] Session shutdown via context")
 					return
 				default:
-					// Just a timeout, continue reading
 					continue
 				}
 			}
 			// EOF or real error
-			// Map common client-side disconnects (RST/EOF) explicitly
 			if errors.Is(err, syscall.ECONNRESET) || strings.Contains(err.Error(), "connection reset by peer") {
 				sess.disconnectReason = "client_disconnect"
 				log.Printf("[SMTP] Client disconnected (RST) from %s: %v", clientAddr, err)
@@ -228,7 +236,7 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 
 		// Reset deadline after successful read
 		conn.SetReadDeadline(time.Time{})
-		conn.SetDeadline(time.Now().Add(2 * time.Minute)) // refresh idle timeout
+		conn.SetDeadline(time.Now().Add(2 * time.Minute))
 
 		line := strings.TrimSpace(string(lineBytes))
 		log.Printf("[SMTP] %s >> %s", clientAddr, line)
@@ -242,11 +250,12 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 			cmd = strings.ToUpper(line)
 		}
 
+		// Handle SMTP commands
 		switch cmd {
 		case "EHLO":
 			sess.commands = append(sess.commands, line)
 			state = "HELO_RECEIVED"
-			// Capture client-presented hostname
+			// Capture FQHN
 			sess.clientHostname = arg
 			writeLine(conn, "250-nsec.uni-muenster.de")
 			writeLine(conn, "250-PIPELINING")
@@ -262,7 +271,7 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 		case "HELO":
 			sess.commands = append(sess.commands, line)
 			state = "HELO_RECEIVED"
-			// Capture client-presented hostname
+			// Capture FQHN
 			sess.clientHostname = arg
 			writeLine(conn, "250 OK")
 
@@ -272,11 +281,12 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 			writeLine(conn, "252 2.5.2 Cannot VRFY user, but will accept message and attempt delivery")
 
 		case "EXPN":
-			// Mailing list expansion typically disabled
+			// Respond that mailing list expansion is disabled
 			sess.commands = append(sess.commands, line)
 			writeLine(conn, "502 5.5.1 Command not supported")
 
 		case "MAIL":
+			// Starts Mail sending
 			sess.commands = append(sess.commands, line)
 			if state == "INIT" {
 				writeLine(conn, "503 5.5.1 Error: need HELO or EHLO first")
@@ -298,6 +308,7 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 			writeLine(conn, fmt.Sprintf("250 2.1.0 Originator %s ok", sender))
 
 		case "RCPT":
+			// Set receiver
 			sess.commands = append(sess.commands, line)
 			if state != "MAIL_RECEIVED" && state != "RCPT_RECEIVED" {
 				writeLine(conn, "503 5.5.1 Error: need MAIL command")
@@ -320,6 +331,7 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 			writeLine(conn, fmt.Sprintf("250 2.1.5 Recipient %s ok", recip))
 
 		case "DATA":
+			// Log Email data
 			sess.commands = append(sess.commands, line)
 			if state != "RCPT_RECEIVED" {
 				writeLine(conn, "503 5.5.1 Error: need RCPT command")
@@ -341,7 +353,7 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 			sess.dateHeader = headers["Date"]
 			log.Printf("[SMTP] Message from %s | MAIL=%s | RCPT=%v\nBody:\n%s\n---END---",
 				clientAddr, mailFrom, rcptTo, body)
-			// Generate realistic queue ID (hex timestamp + random-looking suffix)
+			// Generate random queue ID
 			queueID := strings.ToUpper(strings.ReplaceAll(time.Now().Format("20060102150405"), "", "")) + "A1B2C"
 			writeLine(conn, "250 2.0.0 Ok: queued as "+queueID)
 			// Reset for next message
@@ -361,7 +373,8 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 				writeLine(conn, "454 4.7.0 TLS not available")
 				break
 			}
-			writeLine(conn, "220 2.7.0 Ready to start TLS")
+			writeLine(conn, "220 2.0.0 Ready to start TLS")
+			// Upgrade connection to TLS encryption
 			tlsConn := tls.Server(conn, tlsConfig)
 			if err := tlsConn.Handshake(); err != nil {
 				errStr := err.Error()
@@ -387,6 +400,7 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 			state = "INIT"
 
 		case "AUTH":
+			// Handle simple LOGIN AUTH (Username/Password)
 			sess.commands = append(sess.commands, line)
 			if state == "INIT" {
 				writeLine(conn, "503 5.5.1 Error: need HELO or EHLO first")
@@ -398,7 +412,7 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 			}
 			sess.authMechanism = "LOGIN"
 			// Prompt for username
-			writeLine(conn, "334 VXNlcm5hbWU6") // "Username:" in base64
+			writeLine(conn, "334 VXNlcm5hbWU6") // "Username:" in b64
 
 			// Read username
 			conn.SetReadDeadline(time.Now().Add(2 * time.Minute))
@@ -429,8 +443,8 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 			authUser = string(userDecoded)
 			sess.authUser = authUser
 
-			// Prompt for password
-			writeLine(conn, "334 UGFzc3dvcmQ6") // "Password:" in base64
+			// Password prompt
+			writeLine(conn, "334 UGFzc3dvcmQ6") // "Password:" in b64
 
 			// Read password
 			conn.SetReadDeadline(time.Now().Add(2 * time.Minute))
@@ -461,13 +475,12 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 			authPass := string(passDecoded)
 			sess.authPass = authPass
 
-			// Log credentials (honeypot purpose)
 			log.Printf("[SMTP] AUTH LOGIN from %s | username=%s password=%s", clientAddr, authUser, authPass)
 
-			// Always accept authentication (honeypot)
 			writeLine(conn, "235 2.7.0 Authentication successful")
 
 		case "QUIT":
+			// Handles graceful quitting
 			sess.commands = append(sess.commands, line)
 			sess.disconnectReason = "quit_command"
 			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
@@ -480,6 +493,7 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 			writeLine(conn, "250 OK")
 
 		case "RSET":
+			// Resets SMTP state machine
 			sess.commands = append(sess.commands, line)
 			if state == "INIT" {
 				writeLine(conn, "503 5.5.1 Error: need HELO or EHLO first")
@@ -496,7 +510,7 @@ func (hh *SmtpHandlerInstance) handleConn(ctx context.Context, conn net.Conn, tl
 			writeLine(conn, "214 STARTTLS AUTH PLAIN LOGIN")
 
 		default:
-			// Default fallback for unexpected commands
+			// Default fallback
 			sess.commands = append(sess.commands, line)
 			writeLine(conn, "502 5.5.2 Error: command not recognized")
 		}
@@ -514,7 +528,6 @@ type SmtpSession struct {
 	tlsCipherSuite string
 	duration       time.Duration
 
-	// Honeypot captured fields
 	sender      string
 	recipients  []string
 	rawData     string
@@ -523,18 +536,16 @@ type SmtpSession struct {
 	messageBody string
 	allHeaders  map[string]string
 
-	// AUTH credentials
 	authUser      string
 	authPass      string
 	authMechanism string
 
-	// Full command log for behavioral analysis
 	commands []string
 
-	// Disconnect reason
 	disconnectReason string
 }
 
+// readSmtpData parses DATA bodies
 func readSmtpData(reader *bufio.Reader) (string, error) {
 	var lines []string
 	for {
@@ -552,7 +563,6 @@ func readSmtpData(reader *bufio.Reader) (string, error) {
 }
 
 // parseEmailContent splits SMTP DATA content into headers and body.
-// Handles simple folded headers (continuation lines starting with space/tab).
 func parseEmailContent(data string) (map[string]string, string) {
 	headers := make(map[string]string)
 	lines := strings.Split(data, "\n")
@@ -562,8 +572,8 @@ func parseEmailContent(data string) (map[string]string, string) {
 	i := 0
 	for ; i < len(lines); i++ {
 		l := lines[i]
-		if strings.TrimSpace(l) == "" { // blank separator
-			i++ // move to first body line
+		if strings.TrimSpace(l) == "" {
+			i++
 			break
 		}
 		headerLines = append(headerLines, l)
@@ -593,12 +603,13 @@ func parseEmailContent(data string) (map[string]string, string) {
 	return headers, body
 }
 
+// writeLine writes a line to a connection
 func writeLine(conn net.Conn, s string) {
 	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	_, _ = conn.Write([]byte(s + "\r\n"))
 }
 
-// tlsVersionString converts TLS version constant to readable string
+// tlsVersionString converts TLS version constant to human readable string
 func tlsVersionString(version uint16) string {
 	switch version {
 	case tls.VersionTLS10:

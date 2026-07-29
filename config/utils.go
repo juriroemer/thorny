@@ -28,7 +28,7 @@ func InferDefaultNInterface() *net.Interface {
 	return nil
 }
 
-// FilterSensorIPs returns a slice of reasonable sensor IPs:
+// FilterSensorIPs returns a slice of possible sensor IPs
 // - excludes loopback
 // - prefers IPv4, but also returns global-scope IPv6
 // - excludes link-local and unspecified addresses

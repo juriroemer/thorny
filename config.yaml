@@ -1,47 +1,33 @@
-c2: 127.0.0.1
-output: 1
-network:
-  promiscuous: false
 logging:
-  snaplen: 1500
-  packetsperlogfile: 10
-  logDir: './log'
+  logDir: '/var/spool/thorny'
 tls:
-  organization: 'Uni Muenster'
+  organization: 'Some Org'
   country: 'Germany'
   province: ' NRW'
   locality: 'NRW'
   streetAddress: 'Somestreet'
   postalCode: '48143'
-  commonName: 'Uni Muenster'
+  commonName: 'Some Name'
   dnsNames:
     - 'nsec.uni-muenster.de'
   daysValid: 31
-  certPath: './cert/cert.pem'
-  keyPath: './cert/key.pem'
+  certPath: '/root/config/cert/cert.pem'
+  keyPath: '/root/config/cert/key.pem'
 
 ## A Map of Handlers. Uses the port a the handler should use as key.
 handlers:
-  #  80:
-  #    name: http_handler
-  #    config:
-  #      template: nginx
-  #      values:
-  #        version: 69.42.23 # The nginx version that is set in the  `Server` header, e.g. `version: 1.29.2` -> `Server: nginx/1.29.2`
-  #        headers: # Map of additional headers you want to deliver
-  #          Content blabla: 'text/html'
   25:
     name: smtp_handler
-    config: #TODO catch missing config, make them not panic
-  2222:
+    config:
+  22:
     name: ssh_handler
     config:
       values:
         version: 'OpenSSH_8.9p1'
         message_limit: 10
-        id_ed25519: './ssh/id_ed25519'
-        id_rsa: './ssh/id_rsa'
-        id_ecdsa: './ssh/id_ecdsa'
+        id_ed25519: '/root/config/ssh/id_ed25519'
+        id_rsa: '/root/config/ssh/id_rsa'
+        id_ecdsa: '/root/config/ssh/id_ecdsa'
   389:
     name: ldap_handler
     config:
@@ -58,7 +44,3 @@ filters:
   - name: ipfilter
     config:
       ips:
-        #- 128.176.164.92
-        #- 10.67.59.246/8
-        #- 128.176.0.0/16
-        #- 185.151.152.0/22

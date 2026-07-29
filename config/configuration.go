@@ -10,6 +10,7 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
+// Configuration struct, holds config file configuration
 type Config struct {
 	C2 net.IP `yaml:"c2"`
 
@@ -37,11 +38,7 @@ type Config struct {
 	Tls map[any]any `yaml:"tls"`
 }
 
-func (c *Config) validate() bool {
-	slog.Warn("Config validation not implemented.")
-	return true
-}
-
+// NewConfig constructs a new config struct, infers network interface and IP
 func NewConfig(configPath *string) (*Config, error) {
 	config := &Config{}
 
@@ -77,8 +74,6 @@ func NewConfig(configPath *string) (*Config, error) {
 	if config.Network.Iface == "" && iface != nil {
 		config.Network.Iface = iface.Name
 	}
-
-	config.validate()
 
 	return config, nil
 }

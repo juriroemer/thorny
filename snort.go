@@ -11,6 +11,9 @@ import (
 	"time"
 )
 
+// This reads snort output live to be correlated with live packet data read on the interface.
+/// Was ultimately not used for thesis as we went into a different direction.
+
 type Snort_Alert struct {
 	Timestamp time.Time `json:"timestamp"`
 	Pkt_num   int       `json:"pkt_num"`
